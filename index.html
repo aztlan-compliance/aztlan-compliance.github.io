@@ -113,6 +113,7 @@ textarea{min-height:80px;resize:vertical}
   <button class="active" onclick="show('dash',this)">Dashboard</button>
   <button id="nav-docs" onclick="show('docs',this)">Documents</button>
   <button onclick="show('notifs',this)">Notifications</button>
+  <button onclick="show('comments',this)">Comments</button>
   <button id="nav-repo" onclick="show('repo',this)">Repository</button>
 </nav>
 
@@ -199,6 +200,23 @@ textarea{min-height:80px;resize:vertical}
       </div>
     </div>
   </div>
+</section>
+
+<section id="comments" style="display:none">
+  <div class="section-head">
+    <h2 style="margin:0">Comments</h2>
+    <div class="row no-print">
+      <button class="btn btn-primary" id="ch-all" onclick="setChannel('all')">General (everyone)</button>
+      <button class="btn btn-ghost" id="ch-cco" onclick="setChannel('cco')">CCO 1 ↔ CCO 2</button>
+    </div>
+  </div>
+  <div class="card no-print" id="c-compose">
+    <label>New comment</label>
+    <textarea id="c-text" placeholder="Write a comment…"></textarea>
+    <div style="margin-top:10px"><button class="btn btn-gold" onclick="postComment()">Post comment</button></div>
+  </div>
+  <div style="height:16px"></div>
+  <div id="c-list"></div>
 </section>
 
 <section id="repo">
@@ -478,7 +496,7 @@ async function sendMail(to, bcc, subj, body, attach){
 
 // ---------- navigation / roles ----------
 function show(id, btn){
-  ['dash','docs','notifs','repo'].forEach(function(s){ document.getElementById(s).style.display = s===id?'':'none'; });
+  ['dash','docs','notifs','comments','repo'].forEach(function(s){ document.getElementById(s).style.display = s===id?'':'none'; });
   document.querySelectorAll('nav button').forEach(function(b){ b.classList.remove('active'); });
   if(btn) btn.classList.add('active');
   renderAll();
@@ -491,6 +509,10 @@ function applyRole(){
   document.getElementById('btn-upload').style.display = (role==='cco1'||role==='cco2')?'':'none';
   document.getElementById('btn-export').style.display = (colab)?'none':'';
   document.getElementById('r-vis').style.display = (role==='cco1'||role==='cco2')?'':'none';
+  document.getElementById('ch-cco').style.display = (role==='cco1'||role==='cco2'||role==='jefe')?'':'none';
+  document.getElementById('c-compose').style.display = role==='jefe'?'none':'';
+  if(role==='colab' && curChannel==='cco') curChannel = 'all';
+  setChannel(curChannel);
 }
 
 // ---------- internal notifications ----------
@@ -517,6 +539,74 @@ function openInbox(){
   mine.forEach(function(n){ n.read = true; });
   save(); renderBell();
   document.getElementById('m-inbox').classList.add('open');
+}
+
+// ---------- comments ----------
+var curChannel = 'all';
+function nowIso(){ return new Date().toISOString(); }
+function fmtDT(iso){
+  try{ return new Date(iso).toLocaleString('en-US',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }
+  catch(e){ return iso; }
+}
+function setChannel(ch){
+  if(ch==='cco' && !(role==='cco1'||role==='cco2'||role==='jefe')) ch = 'all';
+  curChannel = ch;
+  var a = document.getElementById('ch-all'), c = document.getElementById('ch-cco');
+  if(a) a.className = 'btn '+(ch==='all'?'btn-primary':'btn-ghost');
+  if(c) c.className = 'btn '+(ch==='cco'?'btn-primary':'btn-ghost');
+  renderComments();
+}
+function notifyComment(kind, text){
+  var subj = kind==='cco' ? 'New CCO comment' : 'New comment (general)';
+  var body = myName+' wrote: "'+text.slice(0,160)+'" — see the Comments tab.';
+  var targets = kind==='cco'
+    ? ['cco1','cco2'].filter(function(r){ return r!==role; })
+    : ['cco1','cco2','jefe','colab'].filter(function(r){ return r!==role; });
+  targets.forEach(function(r){ notifyRole(r, subj, body); });
+}
+function postComment(){
+  var t = document.getElementById('c-text').value.trim();
+  if(!t){ toast('Write something first.'); return; }
+  if(!mem.comments) mem.comments = [];
+  mem.comments.unshift({id:'C'+(mem.seq++), channel:curChannel, author:myName, email:myEmail, when:nowIso(), text:t, replies:[]});
+  document.getElementById('c-text').value = '';
+  notifyComment(curChannel, t);
+  save(); renderComments();
+  toast('Comment posted.');
+}
+function postReply(id){
+  var box = document.getElementById('r-'+id);
+  var t = (box && box.value || '').trim();
+  if(!t){ toast('Write a reply first.'); return; }
+  var c = (mem.comments||[]).find(function(x){ return x.id===id; });
+  if(!c) return;
+  if(!c.replies) c.replies = [];
+  c.replies.push({author:myName, email:myEmail, when:nowIso(), text:t});
+  notifyComment(c.channel, t);
+  save(); renderComments();
+  toast('Reply posted.');
+}
+function renderComments(){
+  var el = document.getElementById('c-list');
+  if(!el) return;
+  var canSeeCco = role==='cco1'||role==='cco2'||role==='jefe';
+  var list = (mem.comments||[]).filter(function(c){
+    return c.channel===curChannel && (c.channel!=='cco' || canSeeCco);
+  });
+  var canPost = role!=='jefe';
+  el.innerHTML = list.length ? list.map(function(c){
+    var reps = (c.replies||[]).map(function(r){
+      return '<div style="margin:8px 0 0 24px;padding:10px 12px;background:#faf8f3;border-radius:8px">'
+        + '<strong style="color:var(--navy);font-size:13px">'+esc(r.author)+'</strong> <small style="color:var(--slate)">'+fmtDT(r.when)+'</small>'
+        + '<p style="font-size:13.5px;margin-top:4px">'+esc(r.text).replace(/\n/g,'<br>')+'</p></div>';
+    }).join('');
+    return '<div class="card" style="margin-bottom:12px">'
+      + '<strong style="color:var(--navy)">'+esc(c.author)+'</strong> <small style="color:var(--slate)">'+fmtDT(c.when)+'</small>'
+      + '<p style="margin-top:6px;font-size:14px">'+esc(c.text).replace(/\n/g,'<br>')+'</p>'
+      + reps
+      + (canPost ? '<div class="row no-print" style="margin-top:10px"><input id="r-'+c.id+'" placeholder="Write a reply…" style="flex:1"><button class="btn btn-primary" style="padding:6px 14px" onclick="postReply(\''+c.id+'\')">Reply</button></div>' : '')
+      + '</div>';
+  }).join('') : '<div class="empty">No comments in this channel yet.</div>';
 }
 
 // ---------- documents ----------
@@ -1059,7 +1149,7 @@ function renderDash(){
   }).join('') : '<div class="empty">No quarterly sends scheduled.</div>';
 }
 
-function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); }
+function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); renderComments(); }
 
 document.getElementById('n-type').addEventListener('change', function(){
   document.getElementById('n-date-wrap').style.display = this.value==='trimestral'?'':'none';
