@@ -153,7 +153,12 @@ textarea{min-height:80px;resize:vertical}
 <section id="notifs" style="display:none">
   <div class="grid" style="grid-template-columns:1fr 1.4fr">
     <div class="card no-print" id="compose-card">
-      <h2>Send to all employees</h2>
+      <h2>Send notification</h2>
+      <label>Recipients</label>
+      <select id="n-to">
+        <option value="emps">All employees</option>
+        <option value="cco2">CCO 2 only</option>
+      </select>
       <label>Delivery type</label>
       <select id="n-type">
         <option value="inmediata">Immediate (as soon as received)</option>
@@ -738,18 +743,40 @@ async function emailNotif(id){
   var n = mem.notifs.find(function(x){return x.id===id;});
   if(!n) return;
   var e = mem.emails||{};
-  if(!e.emps){ toast('First set the employee emails.'); return; }
+  if(!n.deliveries) n.deliveries = [];
+  var audience = n.to==='cco2' ? 'CCO 2' : 'All employees';
   try{
-    await sendMail('', e.emps, n.subj, n.body + '\n\n— Compliance Department, Aztlan Equity Management, LLC');
-    toast('Notification emailed to all employees.');
-  }catch(err){ toast('Could not send: '+err.message); }
+    if(n.to==='cco2'){
+      if(!e.cco2){ toast('First set the CCO 2 email under Emails & roles.'); return; }
+      await sendMail(e.cco2, '', n.subj, n.body + '\n\n— Compliance Department, Aztlan Equity Management, LLC');
+      notifyRole('cco2', n.subj, n.body);
+    } else {
+      if(!e.emps){ toast('First set the employee emails.'); return; }
+      await sendMail('', e.emps, n.subj, n.body + '\n\n— Compliance Department, Aztlan Equity Management, LLC');
+    }
+    n.deliveries.push({when:today(), ok:true, to:audience});
+    toast('Notification emailed to '+audience+'.');
+  }catch(err){
+    n.deliveries.push({when:today(), ok:false, to:audience, err:(err.message||'').slice(0,120)});
+    toast('Could not send: '+err.message);
+  }
+  save(); renderAll();
+}
+function ackNotif(id){
+  var n = mem.notifs.find(function(x){return x.id===id;});
+  if(!n) return;
+  if(!n.acks) n.acks = [];
+  if(n.acks.some(function(a){return eqMail(a.email, myEmail);})) return;
+  n.acks.push({email: myEmail, when: today()});
+  save(); renderAll();
+  toast('Receipt confirmed. Thank you.');
 }
 async function sendNotif(){
   var kind = document.getElementById('n-type').value;
   var subj = document.getElementById('n-subj').value.trim();
   var body = document.getElementById('n-body').value.trim();
   if(!subj || !body){ toast('Fill in the subject and message.'); return; }
-  var n = {id:'N'+(mem.seq++), kind:kind, subj:subj, body:body, sent:[]};
+  var n = {id:'N'+(mem.seq++), kind:kind, to:document.getElementById('n-to').value, subj:subj, body:body, sent:[], deliveries:[], acks:[]};
   if(kind==='trimestral'){
     var start = document.getElementById('n-date').value || today();
     n.next = start;
@@ -782,9 +809,7 @@ async function runScheduler(){
     if(n.kind!=='trimestral' || !n.next) continue;
     while(n.next <= today()){
       n.sent.push(n.next); n.next = plus3m(n.next); changed = true;
-      if(e.emps){
-        try{ await sendMail('', e.emps, n.subj, n.body+'\n\n— Compliance Department, Aztlan Equity Management, LLC'); }catch(err){}
-      }
+      await emailNotif(n.id);
     }
   }
   if(changed){ save(); toast('Overdue quarterly notifications were sent by email.'); }
@@ -794,12 +819,12 @@ function delNotif(id){
   save(); renderAll(); toast('Schedule canceled.');
 }
 function renderNotifs(){
-  var trims = mem.notifs.filter(function(n){return n.kind==='trimestral';});
+  var trims = mem.notifs.filter(function(n){return n.kind==='trimestral' && !(role==='colab' && n.to==='cco2');});
   var canManage = role==='cco1'||role==='cco2';
   var t = document.getElementById('trim-list');
   t.innerHTML = trims.length ? trims.map(function(n){
     return '<div class="notif-item trim"><h4>'+esc(n.subj)+'</h4><p>'+esc(n.body)+'</p>'
-      + '<small>Next send: <strong>'+fmt(n.next)+'</strong> · Sent '+n.sent.length+' time(s)</small>'
+      + '<small>'+(n.to==='cco2'?'CCO 2 only':'All employees')+' · Next send: <strong>'+fmt(n.next)+'</strong> · Sent '+n.sent.length+' time(s)</small>'
       + (canManage?'<div style="margin-top:8px" class="row"><button class="btn btn-primary" style="padding:4px 10px;font-size:11.5px" onclick="emailNotif(\''+n.id+'\')">Email now</button>'
       + '<button class="btn btn-red" style="padding:4px 10px;font-size:11.5px" onclick="delNotif(\''+n.id+'\')">Cancel</button></div>':'')+'</div>';
   }).join('') : '<div class="empty">No quarterly sends scheduled.</div>';
@@ -809,10 +834,29 @@ function renderNotifs(){
   });
   sent.sort(function(a,b){ return a.when<b.when?1:-1; });
   var s = document.getElementById('sent-list');
-  s.innerHTML = sent.length ? sent.slice(0,30).map(function(e){
-    return '<div class="notif-item'+(e.n.kind==='trimestral'?' trim':'')+'"><h4>'+esc(e.n.subj)+'</h4><p>'+esc(e.n.body)+'</p>'
-      + '<small>'+fmt(e.when)+' · '+(e.n.kind==='trimestral'?'Quarterly':(e.n.auto?'Automatic':'Immediate'))+' · All employees</small>'
-      + (canManage?'<div style="margin-top:8px"><button class="btn btn-ghost" style="padding:4px 10px;font-size:11.5px" onclick="emailNotif(\''+e.n.id+'\')">Re-send by email</button></div>':'')+'</div>';
+  var visible = sent.filter(function(e){ return !(role==='colab' && e.n.to==='cco2'); });
+  var seen = {};
+  visible = visible.filter(function(e){ if(seen[e.n.id]) return false; seen[e.n.id] = true; return true; });
+  s.innerHTML = visible.length ? visible.slice(0,30).map(function(e){
+    var n = e.n;
+    var audience = n.to==='cco2' ? 'CCO 2 only' : 'All employees';
+    var del = (n.deliveries && n.deliveries.length)
+      ? n.deliveries.map(function(d){ return (d.ok ? '✓ emailed ' : '✗ failed ')+fmt(d.when); }).join(' · ')
+      : 'no email record';
+    var acks = n.acks || [];
+    var ackLine = acks.length
+      ? 'Confirmed received by: '+acks.map(function(a){ return esc(a.email)+' ('+fmt(a.when)+')'; }).join(', ')
+      : 'No read confirmations yet';
+    var iAmRecipient = (n.to==='cco2' && role==='cco2') || (n.to!=='cco2' && role==='colab');
+    var mineAcked = acks.some(function(a){ return eqMail(a.email, myEmail); });
+    var btns = [];
+    if(iAmRecipient && !mineAcked) btns.push('<button class="btn btn-green" style="padding:4px 10px;font-size:11.5px" onclick="ackNotif(\''+n.id+'\')">Confirm received</button>');
+    if(canManage) btns.push('<button class="btn btn-ghost" style="padding:4px 10px;font-size:11.5px" onclick="emailNotif(\''+n.id+'\')">Re-send by email</button>');
+    return '<div class="notif-item'+(n.kind==='trimestral'?' trim':'')+'"><h4>'+esc(n.subj)+'</h4><p>'+esc(n.body)+'</p>'
+      + '<small>'+fmt(e.when)+' · '+(n.kind==='trimestral'?'Quarterly':'Immediate')+' · '+audience+' · '+del+'</small>'
+      + (canManage||iAmRecipient ? '<br><small>'+ackLine+'</small>' : '')
+      + (btns.length ? '<div style="margin-top:8px" class="row">'+btns.join('')+'</div>' : '')
+      + '</div>';
   }).join('') : '<div class="empty">Nothing sent yet.</div>';
 }
 
