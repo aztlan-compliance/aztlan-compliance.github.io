@@ -114,6 +114,7 @@ textarea{min-height:80px;resize:vertical}
   <button id="nav-docs" onclick="show('docs',this)">Documents</button>
   <button onclick="show('notifs',this)">Notifications</button>
   <button onclick="show('comments',this)">Comments</button>
+  <button onclick="show('persec',this)">Personal Securities</button>
   <button id="nav-repo" onclick="show('repo',this)">Repository</button>
 </nav>
 
@@ -129,6 +130,11 @@ textarea{min-height:80px;resize:vertical}
   <div class="card">
     <h2>Awaiting your action</h2>
     <div id="dash-pend"></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card" id="dash-ps-card">
+    <h2>Personal Securities — current quarter</h2>
+    <div id="dash-ps"></div>
   </div>
   <div style="height:16px"></div>
   <div class="card">
@@ -217,6 +223,28 @@ textarea{min-height:80px;resize:vertical}
   </div>
   <div style="height:16px"></div>
   <div id="c-list"></div>
+</section>
+
+<section id="persec" style="display:none">
+  <div class="section-head">
+    <h2 style="margin:0">Personal Securities</h2>
+    <select id="ps-q" style="width:auto;min-width:170px" onchange="renderPerSec()"></select>
+  </div>
+  <div class="card no-print" id="ps-upload">
+    <h2 style="font-size:16px">Submit your report</h2>
+    <p class="hint" style="margin-bottom:10px">Your file is emailed directly to the compliance reviewer and is <strong>not stored in the shared repository</strong>. No one else in the company — including the CCOs — can open your document here; they only see whether you submitted.</p>
+    <label>Statement / report file (PDF, Excel, Word… up to 20 MB)</label>
+    <input type="file" id="ps-file">
+    <label>Note (optional)</label>
+    <input id="ps-note" placeholder="E.g. no reportable transactions this quarter">
+    <div style="margin-top:14px"><button class="btn btn-gold" onclick="submitPerSec()">Submit for this quarter</button></div>
+    <div id="ps-mine" style="margin-top:14px"></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card" id="ps-status">
+    <h2 style="font-size:16px">Submission status <span id="ps-q-label" style="color:var(--slate);font-weight:400"></span></h2>
+    <div id="ps-list"></div>
+  </div>
 </section>
 
 <section id="repo">
@@ -324,6 +352,7 @@ var CONFIG = {
   folder:    'Cumplimiento'
 };
 var SCOPES = ['User.Read','Sites.ReadWrite.All','Mail.Send'];
+var PERSEC_REVIEWER = 'darren_kane@missioncriticalservices.com'; // Personal Securities reports are emailed here only
 // ============================================================
 
 var mem = {docs:[], notifs:[], inbox:[], files:[], emails:{}, seq:1};
@@ -496,7 +525,7 @@ async function sendMail(to, bcc, subj, body, attach){
 
 // ---------- navigation / roles ----------
 function show(id, btn){
-  ['dash','docs','notifs','comments','repo'].forEach(function(s){ document.getElementById(s).style.display = s===id?'':'none'; });
+  ['dash','docs','notifs','comments','persec','repo'].forEach(function(s){ document.getElementById(s).style.display = s===id?'':'none'; });
   document.querySelectorAll('nav button').forEach(function(b){ b.classList.remove('active'); });
   if(btn) btn.classList.add('active');
   renderAll();
@@ -511,6 +540,7 @@ function applyRole(){
   document.getElementById('r-vis').style.display = (role==='cco1'||role==='cco2')?'':'none';
   document.getElementById('ch-cco').style.display = (role==='cco1'||role==='cco2'||role==='jefe')?'':'none';
   document.getElementById('c-compose').style.display = role==='jefe'?'none':'';
+  document.getElementById('ps-upload').style.display = role==='jefe'?'none':'';
   if(role==='colab' && curChannel==='cco') curChannel = 'all';
   setChannel(curChannel);
 }
@@ -539,6 +569,111 @@ function openInbox(){
   mine.forEach(function(n){ n.read = true; });
   save(); renderBell();
   document.getElementById('m-inbox').classList.add('open');
+}
+
+// ---------- personal securities ----------
+function curQuarter(){
+  var d = new Date();
+  return 'Q'+(Math.floor(d.getMonth()/3)+1)+' '+d.getFullYear();
+}
+function quarterOptions(){
+  var y = new Date().getFullYear(), out = [];
+  for(var yy=y+1; yy>=y-2; yy--){
+    for(var q=4; q>=1; q--) out.push('Q'+q+' '+yy);
+  }
+  return out;
+}
+function fillQuarters(){
+  var sel = document.getElementById('ps-q');
+  if(!sel || sel.options.length) return;
+  quarterOptions().forEach(function(q){
+    var o = document.createElement('option');
+    o.value = q; o.textContent = q;
+    sel.appendChild(o);
+  });
+  sel.value = curQuarter();
+}
+function rosterEmails(){
+  var e = mem.emails||{};
+  var list = (e.emps||'').split(',').map(function(x){return x.trim();}).filter(Boolean);
+  [e.cco1, e.cco2].forEach(function(a){
+    if(a && !list.some(function(x){ return eqMail(x,a); })) list.push(a.trim());
+  });
+  return list;
+}
+async function submitPerSec(){
+  var q = document.getElementById('ps-q').value;
+  var inp = document.getElementById('ps-file');
+  var f = inp.files[0];
+  var note = document.getElementById('ps-note').value.trim();
+  if(!f){ toast('Choose your file first.'); return; }
+  if(f.size > 20*1024*1024){ toast('The file exceeds 20 MB.'); return; }
+  toast('Sending your report securely…');
+  try{
+    await sendMail(PERSEC_REVIEWER, '', 'Personal Securities report — '+q+' — '+myName,
+      'Personal securities report submitted through the Aztlan Compliance System.\n\n'
+      + 'Employee: '+myName+' ('+myEmail+')\n'
+      + 'Quarter: '+q+'\n'
+      + 'Submitted: '+fmtDT(nowIso())+'\n'
+      + (note ? 'Note: '+note+'\n' : '')
+      + '\nThe attached file is confidential and was not stored in the company repository.\n\n— Aztlan Equity Management, LLC',
+      {name:f.name, mime:f.type, blob:f});
+  }catch(err){ toast('Could not send: '+err.message); return; }
+  if(!mem.persec) mem.persec = [];
+  mem.persec = mem.persec.filter(function(p){ return !(p.quarter===q && eqMail(p.email, myEmail)); });
+  mem.persec.push({quarter:q, email:myEmail, name:myName, when:nowIso(), fileName:f.name, size:f.size, note:note});
+  inp.value = ''; document.getElementById('ps-note').value = '';
+  save(); renderPerSec();
+  toast('Report sent to the compliance reviewer. Your submission is recorded.');
+}
+function renderPerSec(){
+  fillQuarters();
+  var sel = document.getElementById('ps-q');
+  if(!sel) return;
+  var q = sel.value || curQuarter();
+  var subs = (mem.persec||[]).filter(function(p){ return p.quarter===q; });
+  var lbl = document.getElementById('ps-q-label');
+  if(lbl) lbl.textContent = '· '+q;
+  var mine = subs.find(function(p){ return eqMail(p.email, myEmail); });
+  var mineEl = document.getElementById('ps-mine');
+  if(mineEl){
+    mineEl.innerHTML = mine
+      ? '<div class="notif-item trim"><h4>Submitted ✓</h4><small>'+esc(mine.fileName)+' · sent '+fmtDT(mine.when)+'. Submitting again replaces this record.</small></div>'
+      : '<div class="empty" style="padding:16px">You have not submitted for '+esc(q)+' yet.</div>';
+  }
+  var el = document.getElementById('ps-list');
+  if(!el) return;
+  var isCco = role==='cco1'||role==='cco2'||role==='jefe';
+  if(!isCco){
+    el.innerHTML = '<div class="empty">Only the compliance officers see the company-wide submission list. Your own status is shown above.</div>';
+    return;
+  }
+  var roster = rosterEmails();
+  subs.forEach(function(p){
+    if(!roster.some(function(r){ return eqMail(r, p.email); })) roster.push(p.email);
+  });
+  if(!roster.length){
+    el.innerHTML = '<div class="empty">Add the employee emails under Notifications → Emails & roles to track submissions.</div>';
+    return;
+  }
+  var done = 0;
+  var rows = roster.map(function(addr){
+    var s = subs.find(function(p){ return eqMail(p.email, addr); });
+    if(s) done++;
+    return '<tr><td>'+esc(s ? s.name+' ('+addr+')' : addr)+'</td>'
+      + '<td>'+(s ? '<span class="badge b-ok">Submitted</span>' : '<span class="badge b-rej">Pending</span>')+'</td>'
+      + '<td>'+(s ? fmtDT(s.when) : '—')+'</td>'
+      + '<td>'+(s ? '<small>'+esc(s.note||'')+'</small>' : (role!=='jefe' ? '<button class="btn btn-primary" style="padding:4px 10px;font-size:11.5px" onclick="remindPerSec(\''+esc(addr)+'\',\''+esc(q)+'\')">Send reminder</button>' : ''))+'</td></tr>';
+  }).join('');
+  el.innerHTML = '<p style="font-size:13.5px;color:var(--slate);margin-bottom:10px">'+done+' of '+roster.length+' submitted for '+esc(q)+'. Files are not stored here — they go straight to the reviewer.</p>'
+    + '<div style="overflow-x:auto"><table><thead><tr><th>Person</th><th>Status</th><th>Submitted</th><th>Note / action</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+async function remindPerSec(addr, q){
+  try{
+    await sendMail(addr, '', 'Pending: Personal Securities report '+q,
+      'Hello,\n\nYour personal securities report for '+q+' is still pending.\n\nPlease sign in to the compliance system, open the Personal Securities tab and submit it. Your file is sent directly to the compliance reviewer and is not visible to anyone else in the company.\n\n— Compliance Department, Aztlan Equity Management, LLC');
+    toast('Reminder sent to '+addr+'.');
+  }catch(e){ toast('Could not send: '+e.message); }
 }
 
 // ---------- comments ----------
@@ -1143,13 +1278,26 @@ function renderDash(){
     return '<div class="notif-item"><h4>'+esc(d.title)+'</h4><small>'+esc(d.type)+' · '+STATES[d.state].label+'</small>'
       + '<div style="margin-top:8px"><button class="btn btn-gold" style="padding:5px 12px" onclick="viewDoc(\''+d.id+'\')">Review</button></div></div>';
   }).join('') : '<div class="empty">Nothing pending for '+ROLES[role]+'.</div>';
+  var isCco = role==='cco1'||role==='cco2'||role==='jefe';
+  document.getElementById('dash-ps-card').style.display = isCco?'':'none';
+  if(isCco){
+    var q = curQuarter();
+    var subs = (mem.persec||[]).filter(function(p){ return p.quarter===q; });
+    var roster = rosterEmails();
+    subs.forEach(function(p){ if(!roster.some(function(r){return eqMail(r,p.email);})) roster.push(p.email); });
+    var pending = roster.filter(function(a){ return !subs.some(function(p){ return eqMail(p.email,a); }); });
+    document.getElementById('dash-ps').innerHTML = roster.length
+      ? '<div class="notif-item'+(pending.length?'':' trim')+'"><h4>'+q+': '+(roster.length-pending.length)+' of '+roster.length+' submitted</h4>'
+        + '<small>'+(pending.length ? 'Pending: '+pending.map(esc).join(', ') : 'Everyone has submitted.')+'</small></div>'
+      : '<div class="empty">Add employee emails under Notifications → Emails & roles to track this.</div>';
+  }
   var trims = mem.notifs.filter(function(n){return n.kind==='trimestral';});
   document.getElementById('dash-trim').innerHTML = trims.length ? trims.map(function(n){
     return '<div class="notif-item trim"><h4>'+esc(n.subj)+'</h4><small>Next send: <strong>'+fmt(n.next)+'</strong></small></div>';
   }).join('') : '<div class="empty">No quarterly sends scheduled.</div>';
 }
 
-function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); renderComments(); }
+function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); renderComments(); renderPerSec(); }
 
 document.getElementById('n-type').addEventListener('change', function(){
   document.getElementById('n-date-wrap').style.display = this.value==='trimestral'?'':'none';
