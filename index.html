@@ -233,8 +233,8 @@ textarea{min-height:80px;resize:vertical}
   <div class="card no-print" id="ps-upload">
     <h2 style="font-size:16px">Submit your report</h2>
     <p class="hint" style="margin-bottom:10px">Your file is emailed directly to the compliance reviewer and is <strong>not stored in the shared repository</strong>. No one else in the company — including the CCOs — can open your document here; they only see whether you submitted.</p>
-    <label>Statement / report file (PDF, Excel, Word… up to 20 MB)</label>
-    <input type="file" id="ps-file">
+    <label>Statement / report files (PDF, Excel, Word… you can select several, up to 20 MB in total)</label>
+    <input type="file" id="ps-file" multiple>
     <label>Note (optional)</label>
     <input id="ps-note" placeholder="E.g. no reportable transactions this quarter">
     <div style="margin-top:14px"><button class="btn btn-gold" onclick="submitPerSec()">Submit for this quarter</button></div>
@@ -517,8 +517,12 @@ async function sendMail(to, bcc, subj, body, attach){
     bccRecipients: splitEmails(bcc)
   };
   if(attach){
-    var d = await blobToDataURL(attach.blob);
-    msg.attachments = [{'@odata.type':'#microsoft.graph.fileAttachment', name:attach.name, contentType:attach.mime||'application/octet-stream', contentBytes:d.split(',')[1]}];
+    var list = Array.isArray(attach) ? attach : [attach];
+    msg.attachments = [];
+    for(var ai=0; ai<list.length; ai++){
+      var d = await blobToDataURL(list[ai].blob);
+      msg.attachments.push({'@odata.type':'#microsoft.graph.fileAttachment', name:list[ai].name, contentType:list[ai].mime||'application/octet-stream', contentBytes:d.split(',')[1]});
+    }
   }
   await graph('/me/sendMail', {method:'POST', json:{message:msg, saveToSentItems:true}});
 }
@@ -604,27 +608,29 @@ function rosterEmails(){
 async function submitPerSec(){
   var q = document.getElementById('ps-q').value;
   var inp = document.getElementById('ps-file');
-  var f = inp.files[0];
+  var files = Array.prototype.slice.call(inp.files);
   var note = document.getElementById('ps-note').value.trim();
-  if(!f){ toast('Choose your file first.'); return; }
-  if(f.size > 20*1024*1024){ toast('The file exceeds 20 MB.'); return; }
-  toast('Sending your report securely…');
+  if(!files.length){ toast('Choose at least one file first.'); return; }
+  var total = files.reduce(function(s,f){ return s+f.size; }, 0);
+  if(total > 20*1024*1024){ toast('The files exceed 20 MB in total. Send them in two submissions.'); return; }
+  toast('Sending your report'+(files.length>1?'s':'')+' securely…');
+  var names = files.map(function(f){ return f.name; });
   try{
     await sendMail(PERSEC_REVIEWER, '', 'Personal Securities report — '+q+' — '+myName,
       'Personal securities report submitted through the Aztlan Compliance System.\n\n'
       + 'Employee: '+myName+' ('+myEmail+')\n'
       + 'Quarter: '+q+'\n'
       + 'Submitted: '+fmtDT(nowIso())+'\n'
+      + 'Files ('+files.length+'): '+names.join(', ')+'\n'
       + (note ? 'Note: '+note+'\n' : '')
-      + '\nThe attached file is confidential and was not stored in the company repository.\n\n— Aztlan Equity Management, LLC',
-      {name:f.name, mime:f.type, blob:f});
+      + '\nThe attached file(s) are confidential and were not stored in the company repository.\n\n— Aztlan Equity Management, LLC',
+      files.map(function(f){ return {name:f.name, mime:f.type, blob:f}; }));
   }catch(err){ toast('Could not send: '+err.message); return; }
   if(!mem.persec) mem.persec = [];
-  mem.persec = mem.persec.filter(function(p){ return !(p.quarter===q && eqMail(p.email, myEmail)); });
-  mem.persec.push({quarter:q, email:myEmail, name:myName, when:nowIso(), fileName:f.name, size:f.size, note:note});
+  mem.persec.push({quarter:q, email:myEmail, name:myName, when:nowIso(), files:names, size:total, note:note});
   inp.value = ''; document.getElementById('ps-note').value = '';
   save(); renderPerSec();
-  toast('Report sent to the compliance reviewer. Your submission is recorded.');
+  toast(files.length+' file(s) sent to the compliance reviewer. Your submission is recorded.');
 }
 function renderPerSec(){
   fillQuarters();
@@ -634,11 +640,15 @@ function renderPerSec(){
   var subs = (mem.persec||[]).filter(function(p){ return p.quarter===q; });
   var lbl = document.getElementById('ps-q-label');
   if(lbl) lbl.textContent = '· '+q;
-  var mine = subs.find(function(p){ return eqMail(p.email, myEmail); });
+  var mineList = subs.filter(function(p){ return eqMail(p.email, myEmail); });
   var mineEl = document.getElementById('ps-mine');
   if(mineEl){
-    mineEl.innerHTML = mine
-      ? '<div class="notif-item trim"><h4>Submitted ✓</h4><small>'+esc(mine.fileName)+' · sent '+fmtDT(mine.when)+'. Submitting again replaces this record.</small></div>'
+    mineEl.innerHTML = mineList.length
+      ? '<div class="notif-item trim"><h4>Submitted ✓ — '+mineList.reduce(function(s,p){ return s+(p.files?p.files.length:1); },0)+' file(s) in '+mineList.length+' submission(s)</h4>'
+        + mineList.map(function(p){
+            return '<small>'+esc((p.files||[p.fileName]).join(', '))+' · '+fmtDT(p.when)+'</small>';
+          }).join('<br>')
+        + '<br><small style="color:var(--slate)">You can submit again to add more files for this quarter.</small></div>'
       : '<div class="empty" style="padding:16px">You have not submitted for '+esc(q)+' yet.</div>';
   }
   var el = document.getElementById('ps-list');
@@ -658,12 +668,14 @@ function renderPerSec(){
   }
   var done = 0;
   var rows = roster.map(function(addr){
-    var s = subs.find(function(p){ return eqMail(p.email, addr); });
+    var mySubs = subs.filter(function(p){ return eqMail(p.email, addr); });
+    var s = mySubs[mySubs.length-1];
     if(s) done++;
+    var nFiles = mySubs.reduce(function(t,p){ return t+(p.files?p.files.length:1); }, 0);
     return '<tr><td>'+esc(s ? s.name+' ('+addr+')' : addr)+'</td>'
       + '<td>'+(s ? '<span class="badge b-ok">Submitted</span>' : '<span class="badge b-rej">Pending</span>')+'</td>'
-      + '<td>'+(s ? fmtDT(s.when) : '—')+'</td>'
-      + '<td>'+(s ? '<small>'+esc(s.note||'')+'</small>' : (role!=='jefe' ? '<button class="btn btn-primary" style="padding:4px 10px;font-size:11.5px" onclick="remindPerSec(\''+esc(addr)+'\',\''+esc(q)+'\')">Send reminder</button>' : ''))+'</td></tr>';
+      + '<td>'+(s ? fmtDT(s.when)+'<br><small style="color:var(--slate)">'+nFiles+' file(s)</small>' : '—')+'</td>'
+      + '<td>'+(s ? '<small>'+esc(mySubs.map(function(p){return p.note;}).filter(Boolean).join(' · '))+'</small>' : (role!=='jefe' ? '<button class="btn btn-primary" style="padding:4px 10px;font-size:11.5px" onclick="remindPerSec(\''+esc(addr)+'\',\''+esc(q)+'\')">Send reminder</button>' : ''))+'</td></tr>';
   }).join('');
   el.innerHTML = '<p style="font-size:13.5px;color:var(--slate);margin-bottom:10px">'+done+' of '+roster.length+' submitted for '+esc(q)+'. Files are not stored here — they go straight to the reviewer.</p>'
     + '<div style="overflow-x:auto"><table><thead><tr><th>Person</th><th>Status</th><th>Submitted</th><th>Note / action</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
