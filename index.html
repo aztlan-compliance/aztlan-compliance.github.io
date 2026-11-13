@@ -17,10 +17,17 @@ header{background:var(--navy);color:var(--white);padding:14px 28px;display:flex;
 header h1{font-size:20px;font-weight:600;letter-spacing:2px}
 header h1 span{color:var(--gold)}
 .role-box{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:13px}
-nav{background:var(--white);border-bottom:3px solid var(--gold);display:flex;gap:4px;padding:0 20px;overflow-x:auto}
-nav button{background:none;border:none;padding:14px 18px;font-size:14px;font-weight:600;color:var(--slate);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-3px;white-space:nowrap}
+nav{background:var(--white);border-bottom:3px solid var(--gold);display:flex;align-items:stretch;gap:0;padding:0 20px;overflow-x:auto;box-shadow:0 1px 3px rgba(34,29,85,.06)}
+nav button{background:none;border:none;padding:13px 15px;font-size:13.5px;font-weight:600;color:var(--slate);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-3px;white-space:nowrap;display:flex;align-items:center;gap:7px;transition:color .15s,background .15s}
 nav button.active{color:var(--navy);border-bottom-color:var(--navy)}
-nav button:hover{color:var(--navy)}
+nav button:hover{color:var(--navy);background:#FAF8F3}
+nav .nav-sep{flex:0 0 1px;background:#E5E2DA;margin:11px 11px}
+nav .nav-grp{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#B9C0CC;align-self:center;padding:0 10px 0 2px;white-space:nowrap}
+.nav-pill{display:inline-flex;align-items:center;justify-content:center;min-width:19px;height:19px;padding:0 6px;border-radius:10px;font-size:11px;font-weight:700;line-height:1}
+.nav-pill.red{background:var(--red);color:#fff}
+.nav-pill.gold{background:var(--gold);color:var(--navy)}
+.nav-pill.grey{background:#E5E2DA;color:var(--slate)}
+@media(max-width:1100px){ nav .nav-grp{display:none} nav button{padding:13px 11px} }
 main{max-width:1150px;margin:24px auto;padding:0 20px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:24px}
 .card{background:var(--white);border-radius:10px;padding:20px;box-shadow:0 1px 4px rgba(34,29,85,.10)}
@@ -125,14 +132,19 @@ textarea{min-height:80px;resize:vertical}
 
 <nav style="display:none" id="app-nav">
   <button class="active" onclick="show('dash',this)">Dashboard</button>
+  <button id="nav-cal" onclick="show('cal',this)">Calendar <span class="nav-pill grey" id="pill-cal">0</span></button>
+  <button id="nav-find" onclick="show('find',this)">Findings <span class="nav-pill grey" id="pill-find">0</span></button>
+  <div class="nav-sep" id="nav-sep1"></div>
+  <span class="nav-grp" id="nav-grp-work">Work</span>
+  <button id="nav-checks" onclick="show('checks',this)">Checklists <span class="nav-pill grey" id="pill-chk">0</span></button>
   <button id="nav-docs" onclick="show('docs',this)">Documents</button>
-  <button onclick="show('notifs',this)">Notifications</button>
-  <button onclick="show('comments',this)">Comments</button>
-  <button id="nav-checks" onclick="show('checks',this)">Checklists</button>
-  <button id="nav-find" onclick="show('find',this)">Findings</button>
-  <button id="nav-cal" onclick="show('cal',this)">Calendar</button>
-  <button onclick="show('train',this)">Training &amp; certs</button>
-  <button onclick="show('persec',this)">Personal Securities</button>
+  <button id="nav-train" onclick="show('train',this)">Training &amp; certs <span class="nav-pill grey" id="pill-train">0</span></button>
+  <button id="nav-persec" onclick="show('persec',this)">Personal Securities</button>
+  <div class="nav-sep"></div>
+  <span class="nav-grp">Comms</span>
+  <button id="nav-notifs" onclick="show('notifs',this)">Notifications</button>
+  <button id="nav-comments" onclick="show('comments',this)">Comments</button>
+  <div class="nav-sep"></div>
   <button id="nav-repo" onclick="show('repo',this)">Repository</button>
 </nav>
 
@@ -788,8 +800,12 @@ function applyRole(){
   document.getElementById('ps-upload').style.display = role==='jefe'?'none':'';
   document.getElementById('nav-checks').style.display = (role==='cco1'||role==='cco2'||role==='jefe')?'':'none';
   document.getElementById('tr-admin-bar').style.display = (role==='cco1'||role==='cco2')?'':'none';
-  document.getElementById('nav-find').style.display = (role==='cco1'||role==='cco2'||role==='jefe')?'':'none';
-  document.getElementById('nav-cal').style.display  = (role==='cco1'||role==='cco2'||role==='jefe')?'':'none';
+  var ccoish = (role==='cco1'||role==='cco2'||role==='jefe');
+  document.getElementById('nav-find').style.display = ccoish?'':'none';
+  document.getElementById('nav-cal').style.display  = ccoish?'':'none';
+  // with Calendar and Findings hidden there is no first group to separate
+  document.getElementById('nav-sep1').style.display = ccoish?'':'none';
+  document.getElementById('nav-grp-work').style.display = ccoish?'':'none';
   if(role==='colab' && curChannel==='cco') curChannel = 'all';
   setChannel(curChannel);
 }
@@ -2559,7 +2575,29 @@ function renderDash(){
   }).join('') : '<div class="empty">No quarterly sends scheduled.</div>';
 }
 
-function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); renderComments(); renderPerSec(); renderChecklists(); renderTraining(); renderFindings(); renderCal(); if(curChk) renderChecklistForm(); }
+function navPill(id, n, cls){
+  var el = document.getElementById(id);
+  if(!el) return;
+  el.textContent = n;
+  el.className = 'nav-pill ' + (n ? cls : 'grey');
+  el.style.display = n ? '' : 'none';
+}
+function renderNavPills(){
+  // Calendar: anything due in the next 30 days or already overdue
+  var cal = (mem.cal||[]).filter(function(k){ return !k.closed && trDays(today(), k.due) <= 30; });
+  var calLate = cal.filter(function(k){ return trDays(today(), k.due) < 0; }).length;
+  navPill('pill-cal', cal.length, calLate ? 'red' : 'gold');
+  // Findings: open ones, red when any is high severity
+  var fo = (mem.findings||[]).filter(function(f){ return f.status!=='closed'; });
+  navPill('pill-find', fo.length, fo.some(function(f){ return f.sev==='high'; }) ? 'red' : 'gold');
+  // Checklists: still unanswered
+  var ck = (mem.checklists||[]).filter(function(c){ return chkAnswered(c) < c.total; }).length;
+  navPill('pill-chk', ck, 'gold');
+  // Training & certs: assigned to me and not yet confirmed
+  var tr = (mem.trainings||[]).filter(function(t){ return trIsMine(t) && !trDone(t); });
+  navPill('pill-train', tr.length, tr.some(function(t){ return trDays(today(), t.due) < 0; }) ? 'red' : 'gold');
+}
+function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); renderComments(); renderPerSec(); renderChecklists(); renderTraining(); renderFindings(); renderCal(); renderNavPills(); if(curChk) renderChecklistForm(); }
 
 document.getElementById('n-type').addEventListener('change', function(){
   document.getElementById('n-date-wrap').style.display = this.value==='trimestral'?'':'none';
