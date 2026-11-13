@@ -480,6 +480,7 @@ textarea{min-height:80px;resize:vertical}
     <textarea id="f-ev" placeholder="What document or action proves this is resolved, and where it lives."></textarea>
     <div class="row" style="margin-top:18px">
       <button class="btn btn-gold" onclick="saveFinding()">Save</button>
+      <button class="btn btn-green" id="f-saveclose" onclick="saveFinding(true)">Save and close finding</button>
       <button class="btn btn-ghost" onclick="closeM('m-find')">Cancel</button>
     </div>
   </div>
@@ -1328,9 +1329,14 @@ function editFinding(id){
   window.__findSrc = f.src || null;
   openM('m-find');
 }
-function saveFinding(){
+function saveFinding(alsoClose){
   var title = document.getElementById('f-title').value.trim();
   if(!title){ toast('Describe what was found.'); return; }
+  if(alsoClose && !document.getElementById('f-ev').value.trim()){
+    toast('Fill in the evidence of closure before closing it.');
+    document.getElementById('f-ev').focus();
+    return;
+  }
   var o = {
     title: title,
     desc: document.getElementById('f-desc').value.trim(),
@@ -1340,16 +1346,24 @@ function saveFinding(){
     evidence: document.getElementById('f-ev').value.trim()
   };
   if(!mem.findings) mem.findings = [];
+  var target;
   if(curFind){
     Object.assign(curFind, o);
+    target = curFind;
   } else {
-    mem.findings.unshift(Object.assign({
+    target = Object.assign({
       id:'F'+(mem.seq++), src: window.__findSrc, status:'open',
       created: today(), by: myName, closed: null
-    }, o));
+    }, o);
+    mem.findings.unshift(target);
+  }
+  if(alsoClose){
+    target.status = 'closed';
+    target.closed = {by: myName, at: today()};
   }
   save(); closeM('m-find'); renderFindings();
-  toast(curFind ? 'Finding updated.' : 'Finding recorded.');
+  toast(alsoClose ? 'Closed. The evidence stays on the record.'
+                  : (curFind ? 'Finding updated.' : 'Finding recorded.'));
   curFind = null;
 }
 function closeFinding(id){
@@ -1361,9 +1375,14 @@ function closeFinding(id){
     return;
   }
   if(!f.evidence){
-    toast('Record the evidence of closure first — open the finding and fill that field.');
-    editFinding(id);
-    return;
+    var ev = prompt('To close "'+f.title.slice(0,60)+'", record what proves it is resolved.\n\n'
+      + 'For example: the document that now exists and where it lives, the date an email was sent, '
+      + 'or the filing that was made. This stays on the record and is what an examiner reads.\n\n'
+      + 'Evidence of closure:', '');
+    if(ev === null) return;              // cancelled — leave it open
+    ev = ev.trim();
+    if(!ev){ toast('A finding cannot be closed without evidence.'); return; }
+    f.evidence = ev;
   }
   f.status = 'closed';
   f.closed = {by: myName, at: today()};
