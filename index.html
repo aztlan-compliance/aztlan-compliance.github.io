@@ -249,7 +249,7 @@ textarea{min-height:80px;resize:vertical}
         <button class="btn btn-gold" onclick="document.getElementById('chk-file').click()">+ Import checklist (.docx)</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom:14px">Upload the Word checklist received from Mission Critical Services. The questions are turned into a click-through form — no editing in Word — and can be exported back to Word or emailed to MCS when finished.</p>
+    <p class="hint" style="margin-bottom:14px">Upload the Word checklist received from Mission Critical Services. The questions become a click-through form — no editing in Word. When every question is answered, <strong>CCO 1 approves and it goes to CCO 2</strong>; once <strong>both</strong> have approved, it can be sent to Mission Critical Services as a Word attachment. Changing an answer after approval reopens it as a draft.</p>
     <div class="card" style="padding:0;overflow-x:auto">
       <table>
         <thead><tr><th>Checklist</th><th>Imported</th><th>Progress</th><th>Status</th><th>Actions</th></tr></thead>
@@ -269,7 +269,6 @@ textarea{min-height:80px;resize:vertical}
         <button class="btn btn-ghost" onclick="closeChecklist()">← Back</button>
         <button class="btn btn-ghost" onclick="toggleUnanswered()" id="chk-filter">Show only unanswered</button>
         <button class="btn btn-primary" onclick="exportChecklistWord()">Export to Word</button>
-        <button class="btn btn-gold" onclick="emailChecklist()">Email to MCS</button>
       </div>
     </div>
     <div class="card" style="padding:14px 18px;margin-bottom:14px">
@@ -278,6 +277,7 @@ textarea{min-height:80px;resize:vertical}
         <small style="color:var(--slate)">Answers save automatically</small>
       </div>
       <div class="progwrap"><div class="progbar" id="chk-prog" style="width:0%"></div></div>
+      <div id="chk-flow" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px"></div>
     </div>
     <div id="chk-body"></div>
   </div>
@@ -757,8 +757,7 @@ function renderChecklists(){
   tb.innerHTML = '';
   list.forEach(function(c){
     var a = chkAnswered(c), pct = c.total ? Math.round(a*100/c.total) : 0;
-    var badge = c.status==='sent' ? '<span class="badge b-ok">Sent to MCS</span>'
-      : (a>=c.total ? '<span class="badge b-ok">Complete</span>' : '<span class="badge b-cco2">In progress</span>');
+    var badge = chkStatusBadge(c);
     var tr = document.createElement('tr');
     tr.innerHTML = '<td><strong>'+esc(c.name)+'</strong><br><small style="color:var(--slate)">'+esc(c.fileName)+'</small></td>'
       + '<td>'+fmt(c.imported)+'<br><small style="color:var(--slate)">'+esc(c.by||'')+'</small></td>'
@@ -816,6 +815,91 @@ function renderChecklistForm(){
     });
   });
   document.getElementById('chk-body').innerHTML = h || '<div class="empty">Nothing left to answer.</div>';
+  renderChkFlow();
+}
+
+// ---------- checklist approval flow: CCO 1 -> CCO 2 -> MCS ----------
+var CHK_STEPS = {draft:0, cco1:1, approved:2, sent:3};
+function chkStage(c){ return CHK_STEPS[c.status] === undefined ? 0 : CHK_STEPS[c.status]; }
+function chkStatusBadge(c){
+  var st = c.status || 'draft', a = chkAnswered(c);
+  if(st==='sent')     return '<span class="badge b-ok">Sent to MCS</span>';
+  if(st==='approved') return '<span class="badge b-ok">Approved — ready to send</span>';
+  if(st==='cco1')     return '<span class="badge b-cco2">Awaiting CCO 2 approval</span>';
+  if(a>=c.total && c.total) return '<span class="badge b-draft">Complete — awaiting CCO 1 approval</span>';
+  return '<span class="badge b-cco2">In progress</span>';
+}
+function renderChkFlow(){
+  var el = document.getElementById('chk-flow');
+  if(!el || !curChk) return;
+  var c = curChk, a = chkAnswered(c), full = c.total && a >= c.total, st = c.status || 'draft';
+  var line = function(label, who){
+    return '<div style="font-size:12.5px;color:var(--slate);margin-bottom:3px">'
+      + (who ? '<span style="color:#1F7A4D;font-weight:700">&#10003;</span> ' : '<span style="color:#C9CDD6">&#9675;</span> ')
+      + label + (who ? ' — <strong style="color:var(--navy)">'+esc(who.by)+'</strong>, '+fmt(who.at) : '')
+      + '</div>';
+  };
+  var h = '<div style="margin-bottom:10px">'
+    + line('Approved by CCO 1', c.app1)
+    + line('Approved by CCO 2', c.app2)
+    + line('Sent to Mission Critical Services', c.sent)
+    + '</div>';
+  var btns = [];
+  if(st==='draft' && role==='cco1'){
+    btns.push('<button class="btn btn-gold"'+(full?'':' disabled title="Answer every question first"')
+      + ' onclick="chkApprove1()">Approve and send to CCO 2</button>');
+    if(!full) btns.push('<small style="color:var(--slate)">'+(c.total-a)+' question(s) still unanswered.</small>');
+  }
+  if(st==='cco1'){
+    if(role==='cco2'){
+      btns.push('<button class="btn btn-gold" onclick="chkApprove2()">Approve</button>');
+      btns.push('<button class="btn btn-ghost" onclick="chkReturn()">Return to CCO 1</button>');
+    } else {
+      btns.push('<small style="color:var(--slate)">Waiting for CCO 2 to approve. You can still fix an answer — that returns it to draft.</small>');
+    }
+  }
+  if(st==='approved'){
+    btns.push('<button class="btn btn-gold" onclick="emailChecklist()">Send to Darren in Word</button>');
+  }
+  if(st==='sent'){
+    btns.push('<small style="color:var(--slate)">Sent to MCS'+(c.sent?' on '+fmt(c.sent.at):'')+'. Editing an answer reopens it as a draft.</small>');
+  }
+  el.innerHTML = h + '<div class="row">'+btns.join('')+'</div>';
+}
+function chkApprove1(){
+  if(!curChk || role!=='cco1') return;
+  if(chkAnswered(curChk) < curChk.total){ toast('Answer every question before approving.'); return; }
+  curChk.app1 = {by: myName, at: today()};
+  curChk.status = 'cco1';
+  notifyRole('cco2', 'Checklist for your approval: '+curChk.name,
+    myName+' finished and approved the '+curChk.name+' ('+curChk.total+' questions). It is waiting for your approval in the Checklists tab. Once you approve it, it can be sent to Mission Critical Services.');
+  save(); renderChecklistForm();
+  toast('Approved. CCO 2 has been notified.');
+}
+function chkApprove2(){
+  if(!curChk || role!=='cco2') return;
+  curChk.app2 = {by: myName, at: today()};
+  curChk.status = 'approved';
+  notifyRole('cco1', 'Checklist approved: '+curChk.name,
+    myName+' approved the '+curChk.name+'. It is now ready to be sent to Mission Critical Services in Word.');
+  save(); renderChecklistForm();
+  toast('Approved by CCO 2. Ready to send to MCS.');
+}
+function chkReturn(){
+  if(!curChk || role!=='cco2') return;
+  var why = prompt('What should CCO 1 change?');
+  if(why===null) return;
+  curChk.status = 'draft'; curChk.app1 = null;
+  notifyRole('cco1', 'Checklist returned: '+curChk.name,
+    myName+' returned the '+curChk.name+' for changes.'+(why?'\n\nComment: '+why:''));
+  save(); renderChecklistForm();
+  toast('Returned to CCO 1.');
+}
+function chkReopen(){
+  if(!curChk) return;
+  if(chkStage(curChk) > 0){
+    curChk.status = 'draft'; curChk.app1 = null; curChk.app2 = null;
+  }
 }
 var _chkSaveTimer = null;
 function chkSaveSoon(){
@@ -826,11 +910,13 @@ function setAns(gi, ii, v){
   if(!curChk) return;
   var it = curChk.groups[gi].items[ii];
   it.ans = (it.ans === v) ? '' : v;
+  chkReopen();
   chkSaveSoon(); renderChecklistForm();
 }
 function setCmt(gi, ii, v){
   if(!curChk) return;
   curChk.groups[gi].items[ii].comment = v;
+  chkReopen();
   chkSaveSoon();
 }
 function delChecklist(id){
@@ -864,24 +950,35 @@ function checklistTableHtml(c){
 function exportChecklistWord(id){
   var c = id ? (mem.checklists||[]).find(function(x){ return x.id===id; }) : curChk;
   if(!c) return;
-  var a = chkAnswered(c);
-  var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
-    + '<head><meta charset="utf-8"><title>'+esc(c.name)+'</title></head><body style="font-family:Calibri">'
-    + '<h2 style="color:#221D55">AZTLAN EQUITY MANAGEMENT, LLC</h2>'
-    + '<h3>'+esc(c.name)+'</h3>'
-    + '<p style="font-size:10pt">Source document: '+esc(c.fileName)+'<br>Completed by: '+esc(c.by||'')+'<br>'
-    + 'Answered: '+a+' of '+c.total+'<br>Exported: '+fmt(today())+'</p>'
-    + checklistTableHtml(c)
-    + '</body></html>';
-  var blob = new Blob(['﻿', html], {type:'application/msword'});
+  var blob = checklistWordBlob(c);
   var link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = c.name.replace(/[^\w\- ]/g,'') + ' - Aztlan responses.doc';
   link.click();
   toast('Word file downloaded.');
 }
+function checklistWordBlob(c){
+  var a = chkAnswered(c);
+  var appr = '';
+  if(c.app1) appr += 'Approved by CCO 1: '+esc(c.app1.by)+' — '+fmt(c.app1.at)+'<br>';
+  if(c.app2) appr += 'Approved by CCO 2: '+esc(c.app2.by)+' — '+fmt(c.app2.at)+'<br>';
+  var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
+    + '<head><meta charset="utf-8"><title>'+esc(c.name)+'</title></head><body style="font-family:Calibri">'
+    + '<h2 style="color:#221D55">AZTLAN EQUITY MANAGEMENT, LLC</h2>'
+    + '<h3>'+esc(c.name)+'</h3>'
+    + '<p style="font-size:10pt">Source document: '+esc(c.fileName)+'<br>Completed by: '+esc(c.by||'')+'<br>'
+    + appr
+    + 'Answered: '+a+' of '+c.total+'<br>Exported: '+fmt(today())+'</p>'
+    + checklistTableHtml(c)
+    + '</body></html>';
+  return new Blob(['﻿', html], {type:'application/msword'});
+}
 async function emailChecklist(){
   if(!curChk) return;
+  if(curChk.status !== 'approved' && curChk.status !== 'sent'){
+    toast('This checklist has to be approved by CCO 1 and CCO 2 before it can be sent to MCS.');
+    return;
+  }
   var to = prompt('Send the completed checklist to:', 'darren_kane@missioncriticalservices.com');
   if(!to) return;
   var a = chkAnswered(curChk);
@@ -894,14 +991,24 @@ async function emailChecklist(){
       lines.push(it.n+'. '+it.q+'\n   Answer: '+label+(it.comment?'\n   Comments: '+it.comment:''));
     });
   });
+  var appr = '';
+  if(curChk.app1) appr += 'Approved by CCO 1: '+curChk.app1.by+' ('+fmt(curChk.app1.at)+')\n';
+  if(curChk.app2) appr += 'Approved by CCO 2: '+curChk.app2.by+' ('+fmt(curChk.app2.at)+')\n';
+  var fileName = curChk.name.replace(/[^\w\- ]/g,'').trim() + ' - Aztlan responses.doc';
   try{
+    toast('Sending to '+to.trim()+'…');
     await sendMail(to.trim(), '', curChk.name+' — Aztlan responses',
-      'Hello,\n\nPlease find below Aztlan Equity Management, LLC\'s responses to the '+curChk.name+'.\n'
-      + 'Source document: '+curChk.fileName+'\nCompleted by: '+(curChk.by||'')+'\nAnswered: '+a+' of '+curChk.total+'\n\n'
-      + lines.join('\n') + '\n\n— Compliance Department, Aztlan Equity Management, LLC');
+      'Hello Darren,\n\nPlease find attached Aztlan Equity Management, LLC\'s completed '+curChk.name+' in Word format.\n'
+      + 'Source document: '+curChk.fileName+'\nCompleted by: '+(curChk.by||'')+'\n'+appr
+      + 'Answered: '+a+' of '+curChk.total+'\n\nThe responses are also set out below for convenience.\n'
+      + lines.join('\n') + '\n\n— Compliance Department, Aztlan Equity Management, LLC',
+      [{name:fileName, blob:checklistWordBlob(curChk), mime:'application/msword'}]);
     curChk.status = 'sent';
+    curChk.sent = {by: myName, at: today(), to: to.trim()};
+    notifyRole(role==='cco1'?'cco2':'cco1', 'Checklist sent to MCS: '+curChk.name,
+      myName+' sent the approved '+curChk.name+' to '+to.trim()+' in Word format.');
     save(); renderChecklistForm();
-    toast('Checklist emailed to '+to.trim()+'.');
+    toast('Checklist emailed to '+to.trim()+' with the Word file attached.');
   }catch(e){ toast('Could not send: '+e.message); }
 }
 
