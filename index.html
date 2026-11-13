@@ -706,6 +706,7 @@ async function boot(){
     await runScheduler();
     show('dash', document.querySelector('nav button'));
     autoTrainReminders();
+    autoNotifAckReminders();
   }catch(err){
     loginError('Error connecting to Microsoft 365:\n'+err.message+'\n\nCheck the CONFIG section and the app permissions.');
   }
@@ -2248,14 +2249,22 @@ async function emailNotif(id){
   var e = mem.emails||{};
   if(!n.deliveries) n.deliveries = [];
   var audience = n.to==='cco2' ? 'CCO 2' : 'All employees';
+  var ackAsk = '\n\n----------\nPlease confirm receipt: open the compliance system, go to the Notifications tab '
+    + 'and press "Confirm received" on this notice.\n'
+    + location.origin + location.pathname
+    + '\n\nThe confirmation is the Firm\'s record that this reminder reached you, and it is reviewed in our annual compliance review.'
+    + '\n\n— Compliance Department, Aztlan Equity Management, LLC';
   try{
     if(n.to==='cco2'){
       if(!e.cco2){ toast('First set the CCO 2 email under Emails & roles.'); return; }
-      await sendMail(e.cco2, '', n.subj, n.body + '\n\n— Compliance Department, Aztlan Equity Management, LLC');
+      await sendMail(e.cco2, '', n.subj, n.body + ackAsk);
       notifyRole('cco2', n.subj, n.body);
     } else {
       if(!e.emps){ toast('First set the employee emails.'); return; }
-      await sendMail('', e.emps, n.subj, n.body + '\n\n— Compliance Department, Aztlan Equity Management, LLC');
+      var bcc = e.emps;
+      if(e.cco1 && !new RegExp(e.cco1.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i').test(bcc)) bcc += ', '+e.cco1;
+      if(e.cco2 && !new RegExp(e.cco2.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i').test(bcc)) bcc += ', '+e.cco2;
+      await sendMail('', bcc, n.subj, n.body + ackAsk);
     }
     n.deliveries.push({when:today(), ok:true, to:audience});
     toast('Notification emailed to '+audience+'.');
@@ -2270,9 +2279,59 @@ function ackNotif(id){
   if(!n) return;
   if(!n.acks) n.acks = [];
   if(n.acks.some(function(a){return eqMail(a.email, myEmail);})) return;
-  n.acks.push({email: myEmail, when: today()});
+  n.acks.push({email: myEmail, name: myName, when: today()});
   save(); renderAll();
   toast('Receipt confirmed. Thank you.');
+}
+function toggleNotifBody(id, btn){
+  var full = document.getElementById('nb-'+id), snip = document.getElementById('nbs-'+id);
+  if(!full) return;
+  var open = full.style.display !== 'none';
+  full.style.display = open ? 'none' : '';
+  if(snip) snip.style.display = open ? '' : 'none';
+  btn.textContent = open ? 'Read the full notice' : 'Hide the notice';
+}
+// who was addressed but has not confirmed
+function notifPending(n){
+  var e = mem.emails || {}, list = [];
+  if(n.to === 'cco2'){
+    if(e.cco2) list.push(e.cco2);
+  } else {
+    list = (e.emps||'').split(',').map(function(x){return x.trim();}).filter(Boolean);
+    if(e.cco1 && !list.some(function(x){return eqMail(x, e.cco1);})) list.push(e.cco1);
+    if(e.cco2 && !list.some(function(x){return eqMail(x, e.cco2);})) list.push(e.cco2);
+  }
+  var acks = n.acks || [];
+  return list.filter(function(m){ return !acks.some(function(a){ return eqMail(a.email, m); }); });
+}
+async function remindNotifAcks(id, manual){
+  var list = (mem.notifs||[]).filter(function(n){ return (!id || n.id===id) && (n.sent||[]).length; });
+  var sentCount = 0;
+  for(var i=0;i<list.length;i++){
+    var n = list[i], pend = notifPending(n);
+    if(!pend.length) continue;
+    if(!manual && n.lastAckRem && trDays(n.lastAckRem, today()) < 15) continue;
+    try{
+      await sendMail(pend.join(', '), '', 'Confirmation pending: '+n.subj,
+        'Hello,\n\nOur records show you have not yet confirmed receipt of the compliance notice "'+n.subj+'", '
+        + 'distributed on '+fmt((n.sent||[])[(n.sent||[]).length-1])+'.\n\n'
+        + 'Please open the compliance system, go to the Notifications tab and press "Confirm received" on that notice:\n'
+        + location.origin + location.pathname + '\n\n'
+        + 'The confirmation is the Firm\'s record that the reminder reached you, and it is reviewed in our annual compliance review.\n\n'
+        + '— Compliance Department, Aztlan Equity Management, LLC');
+      n.lastAckRem = today(); sentCount++;
+    }catch(err){}
+  }
+  if(sentCount) save();
+  renderAll();
+  if(manual) toast(sentCount ? 'Reminder sent for '+sentCount+' notice(s).' : 'Everyone has already confirmed.');
+  return sentCount;
+}
+function autoNotifAckReminders(){
+  if(role!=='cco1' && role!=='cco2') return;
+  remindNotifAcks(null, false).then(function(n){
+    if(n) toast(n+' automatic confirmation reminder(s) sent (15-day cycle).');
+  });
 }
 async function sendNotif(){
   var kind = document.getElementById('n-type').value;
@@ -2350,15 +2409,35 @@ function renderNotifs(){
     var ackLine = acks.length
       ? 'Confirmed received by: '+acks.map(function(a){ return esc(a.email)+' ('+fmt(a.when)+')'; }).join(', ')
       : 'No read confirmations yet';
-    var iAmRecipient = (n.to==='cco2' && role==='cco2') || (n.to!=='cco2' && role==='colab');
+    // A notice to "all employees" is addressed to the CCOs too — they are employees,
+    // and the Code of Ethics obligations it describes apply to them as well.
+    var iAmRecipient = (n.to==='cco2' && (role==='cco2'||role==='cco1'))
+                    || (n.to!=='cco2' && role!=='jefe');
     var mineAcked = acks.some(function(a){ return eqMail(a.email, myEmail); });
+    var pend = notifPending(n);
     var btns = [];
-    if(iAmRecipient && !mineAcked) btns.push('<button class="btn btn-green" style="padding:4px 10px;font-size:11.5px" onclick="ackNotif(\''+n.id+'\')">Confirm received</button>');
-    if(canManage) btns.push('<button class="btn btn-ghost" style="padding:4px 10px;font-size:11.5px" onclick="emailNotif(\''+n.id+'\')">Re-send by email</button>');
-    return '<div class="notif-item'+(n.kind==='trimestral'?' trim':'')+'"><h4>'+esc(n.subj)+'</h4><p>'+esc(n.body)+'</p>'
-      + '<small>'+fmt(e.when)+' · '+(n.kind==='trimestral'?'Quarterly':'Immediate')+' · '+audience+' · '+del+'</small>'
-      + (canManage||iAmRecipient ? '<br><small>'+ackLine+'</small>' : '')
-      + (btns.length ? '<div style="margin-top:8px" class="row">'+btns.join('')+'</div>' : '')
+    if(iAmRecipient && !mineAcked) btns.push('<button class="btn btn-green" onclick="ackNotif(\''+n.id+'\')">Confirm received</button>');
+    if(iAmRecipient && mineAcked) btns.push('<span class="badge b-ok">You confirmed this on '+fmt(acks.filter(function(a){return eqMail(a.email,myEmail);})[0].when)+'</span>');
+    if(canManage && pend.length) btns.push('<button class="btn btn-primary" style="padding:5px 12px" onclick="remindNotifAcks(\''+n.id+'\',true)">Remind the '+pend.length+' pending</button>');
+    if(canManage) btns.push('<button class="btn btn-ghost" style="padding:5px 12px" onclick="emailNotif(\''+n.id+'\')">Re-send by email</button>');
+    var long = (n.body||'').length > 420;
+    var bodyHtml = long
+      ? '<p id="nb-'+n.id+'" style="display:none;white-space:pre-wrap">'+esc(n.body)+'</p>'
+        + '<p id="nbs-'+n.id+'" style="color:var(--slate)">'+esc((n.body||'').slice(0,260))+'…</p>'
+        + '<button class="btn btn-ghost" style="padding:4px 10px;font-size:11.5px" onclick="toggleNotifBody(\''+n.id+'\',this)">Read the full notice</button>'
+      : '<p style="white-space:pre-wrap">'+esc(n.body)+'</p>';
+    return '<div class="notif-item'+(n.kind==='trimestral'?' trim':'')+'">'
+      + '<h4>'+esc(n.subj)+'</h4>'
+      + '<small style="color:var(--slate)">'+fmt(e.when)+' · '+(n.kind==='trimestral'?'Quarterly':'Immediate')+' · '+audience+' · '+del+'</small>'
+      + (btns.length ? '<div style="margin:10px 0" class="row">'+btns.join('')+'</div>' : '<div style="height:8px"></div>')
+      + (canManage||iAmRecipient
+          ? '<small style="color:var(--slate)">'+ackLine
+            + (canManage && pend.length ? '<br><strong style="color:#B3261E">'+pend.length+' pending:</strong> '+esc(pend.join(', ')) : '')
+            + (canManage && !pend.length && acks.length ? '<br><strong style="color:#1F7A4D">Everyone has confirmed.</strong>' : '')
+            + (n.lastAckRem ? '<br>Last reminder '+fmt(n.lastAckRem) : '')
+            + '</small>'
+          : '')
+      + '<div style="margin-top:10px">'+bodyHtml+'</div>'
       + '</div>';
   }).join('') : '<div class="empty">Nothing sent yet.</div>';
 }
