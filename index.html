@@ -129,6 +129,7 @@ textarea{min-height:80px;resize:vertical}
   <button onclick="show('notifs',this)">Notifications</button>
   <button onclick="show('comments',this)">Comments</button>
   <button id="nav-checks" onclick="show('checks',this)">Checklists</button>
+  <button onclick="show('train',this)">Training</button>
   <button onclick="show('persec',this)">Personal Securities</button>
   <button id="nav-repo" onclick="show('repo',this)">Repository</button>
 </nav>
@@ -283,6 +284,26 @@ textarea{min-height:80px;resize:vertical}
   </div>
 </section>
 
+<section id="train" style="display:none">
+  <div class="section-head">
+    <h2 style="margin:0">Training</h2>
+    <div class="row no-print" id="tr-admin-bar">
+      <button class="btn btn-ghost" onclick="sendTrainReminders(null,true)">Send reminders now</button>
+      <button class="btn btn-gold" onclick="openM('m-train')">+ Add training</button>
+    </div>
+  </div>
+  <p class="hint" style="margin-bottom:14px">Each training is addressed either to the CCOs or to all colleagues. Everyone it is addressed to sees it here, opens the material and confirms they completed it. While someone has not confirmed by the deadline, the system emails them a reminder <strong>every 15 days</strong>.</p>
+  <div id="tr-mine"></div>
+  <div style="height:16px"></div>
+  <div class="card" id="tr-admin" style="padding:0;overflow-x:auto">
+    <table>
+      <thead><tr><th>Training</th><th>Audience</th><th>Delivered</th><th>Deadline</th><th>Completed</th><th>Actions</th></tr></thead>
+      <tbody id="tr-rows"></tbody>
+    </table>
+    <div id="tr-empty" class="empty">No training has been loaded yet.</div>
+  </div>
+</section>
+
 <section id="persec" style="display:none">
   <div class="section-head">
     <h2 style="margin:0">Personal Securities</h2>
@@ -361,6 +382,32 @@ textarea{min-height:80px;resize:vertical}
       <button class="btn btn-primary" id="d-save" onclick="saveDoc(false)">Save draft</button>
       <button class="btn btn-gold" id="d-send" onclick="saveDoc(true)">Save & send to CCO 2</button>
       <button class="btn btn-ghost" onclick="closeM('m-doc')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="m-train">
+  <div class="modal">
+    <h2>Add training</h2>
+    <label>Title</label>
+    <input id="t-title" placeholder="E.g. Annual Compliance Presentation 2026">
+    <label>Who has to take it</label>
+    <select id="t-aud">
+      <option value="colab">All colleagues</option>
+      <option value="cco">CCOs only</option>
+      <option value="all">Everyone (CCOs and colleagues)</option>
+    </select>
+    <label>Date delivered / made available</label>
+    <input id="t-given" type="date">
+    <label>Deadline to complete it</label>
+    <input id="t-due" type="date">
+    <label>Description / what it covers</label>
+    <textarea id="t-desc" placeholder="Short summary — this is what goes in the annual review record."></textarea>
+    <label>Material (PowerPoint, PDF, Word, video link file…)</label>
+    <input type="file" id="t-file">
+    <div class="row" style="margin-top:18px">
+      <button class="btn btn-gold" onclick="saveTraining()">Save training</button>
+      <button class="btn btn-ghost" onclick="closeM('m-train')">Cancel</button>
     </div>
   </div>
 </div>
@@ -496,7 +543,7 @@ async function boot(){
       itemId = items.value[0].id;
       try{
         var data = JSON.parse(items.value[0].fields.Data || '{}');
-        mem = Object.assign({docs:[],notifs:[],inbox:[],files:[],emails:{},seq:1}, data);
+        mem = Object.assign({docs:[],notifs:[],inbox:[],files:[],emails:{},checklists:[],trainings:[],seq:1}, data);
       }catch(e){}
     } else {
       var it = await graph('/sites/'+siteId+'/lists/'+listId+'/items', {method:'POST', json:{fields:{Title:'estado', Data:JSON.stringify(mem)}}});
@@ -517,6 +564,7 @@ async function boot(){
     loadEmails();
     await runScheduler();
     show('dash', document.querySelector('nav button'));
+    autoTrainReminders();
   }catch(err){
     loginError('Error connecting to Microsoft 365:\n'+err.message+'\n\nCheck the CONFIG section and the app permissions.');
   }
@@ -539,7 +587,7 @@ async function reloadState(){
   if(_saving || _dirty) return; // nor while a save is in flight
   try{
     var it = await graph('/sites/'+siteId+'/lists/'+listId+'/items/'+itemId+'?$expand=fields');
-    mem = Object.assign({docs:[],notifs:[],inbox:[],files:[],emails:{},checklists:[],seq:1}, JSON.parse(it.fields.Data||'{}'));
+    mem = Object.assign({docs:[],notifs:[],inbox:[],files:[],emails:{},checklists:[],trainings:[],seq:1}, JSON.parse(it.fields.Data||'{}'));
     renderAll();
   }catch(e){}
 }
@@ -593,7 +641,7 @@ async function sendMail(to, bcc, subj, body, attach){
 
 // ---------- navigation / roles ----------
 function show(id, btn){
-  ['dash','docs','notifs','comments','checks','persec','repo'].forEach(function(s){ document.getElementById(s).style.display = s===id?'':'none'; });
+  ['dash','docs','notifs','comments','checks','train','persec','repo'].forEach(function(s){ document.getElementById(s).style.display = s===id?'':'none'; });
   document.querySelectorAll('nav button').forEach(function(b){ b.classList.remove('active'); });
   if(btn) btn.classList.add('active');
   renderAll();
@@ -610,6 +658,7 @@ function applyRole(){
   document.getElementById('c-compose').style.display = role==='jefe'?'none':'';
   document.getElementById('ps-upload').style.display = role==='jefe'?'none':'';
   document.getElementById('nav-checks').style.display = (role==='cco1'||role==='cco2'||role==='jefe')?'':'none';
+  document.getElementById('tr-admin-bar').style.display = (role==='cco1'||role==='cco2')?'':'none';
   if(role==='colab' && curChannel==='cco') curChannel = 'all';
   setChannel(curChannel);
 }
@@ -1014,6 +1063,189 @@ async function emailChecklist(){
     save(); renderChecklistForm();
     toast('Checklist emailed to '+to.trim()+' with the Word file attached.');
   }catch(e){ toast('Could not send: '+e.message); }
+}
+
+// ---------- training ----------
+var TR_AUD = {colab:'All colleagues', cco:'CCOs only', all:'Everyone'};
+function trDays(a, b){ return Math.round((new Date(b) - new Date(a)) / 86400000); }
+function trAudList(t){
+  var e = mem.emails || {}, out = [];
+  if(t.aud === 'colab' || t.aud === 'all'){
+    out = out.concat((e.emps||'').split(',').map(function(x){return x.trim();}).filter(Boolean));
+  }
+  if(t.aud === 'cco'   || t.aud === 'all'){
+    if(e.cco1) out.push(e.cco1);
+    if(e.cco2) out.push(e.cco2);
+  }
+  var seen = {}, uniq = [];
+  out.forEach(function(x){ var k = (x||'').toLowerCase(); if(k && !seen[k]){ seen[k] = 1; uniq.push(x); } });
+  return uniq;
+}
+function trIsMine(t){
+  if(t.aud === 'all') return true;
+  if(t.aud === 'cco') return role === 'cco1' || role === 'cco2';
+  return trAudList(t).some(function(x){ return eqMail(x, myEmail); }) || role === 'colab';
+}
+function trDone(t, mail){
+  return (t.done || []).find(function(d){ return eqMail(d.email, mail || myEmail); });
+}
+async function saveTraining(){
+  var title = document.getElementById('t-title').value.trim();
+  if(!title){ toast('Give the training a title.'); return; }
+  var due = document.getElementById('t-due').value;
+  if(!due){ toast('Set a deadline — it is what drives the reminders.'); return; }
+  var f = document.getElementById('t-file').files[0], meta = null;
+  if(f){
+    try{ toast('Uploading the material…'); meta = await spUpload(f.name, f); }
+    catch(e){ toast('Could not upload the file: '+e.message); return; }
+  }
+  if(!mem.trainings) mem.trainings = [];
+  var t = {
+    id:'T'+(mem.seq++),
+    title: title,
+    aud: document.getElementById('t-aud').value,
+    given: document.getElementById('t-given').value || today(),
+    due: due,
+    desc: document.getElementById('t-desc').value.trim(),
+    file: meta,
+    by: myName,
+    created: today(),
+    done: [],
+    reminders: []
+  };
+  mem.trainings.unshift(t);
+  ['t-title','t-desc'].forEach(function(id){ document.getElementById(id).value = ''; });
+  document.getElementById('t-file').value = '';
+  save(); closeM('m-train'); renderTraining();
+  toast('Training added for '+TR_AUD[t.aud]+'. Deadline '+fmt(t.due)+'.');
+  try{
+    var to = trAudList(t).join(', ');
+    if(to) await sendMail(to, '', 'New training: '+t.title,
+      'Hello,\n\nA new compliance training has been made available: "'+t.title+'".\n'
+      + (t.desc ? '\n'+t.desc+'\n' : '')
+      + '\nDeadline to complete it: '+fmt(t.due)
+      + '\n\nOpen the compliance system, go to the Training tab, review the material and press "I completed this training".'
+      + '\n\n— Compliance Department, Aztlan Equity Management, LLC');
+  }catch(e){}
+}
+function markTrainingDone(id){
+  var t = (mem.trainings||[]).find(function(x){ return x.id===id; });
+  if(!t) return;
+  if(trDone(t)){ toast('You already confirmed this one.'); return; }
+  if(!confirm('Confirm that you reviewed "'+t.title+'" in full?\n\nYour name and today\'s date are recorded as evidence for the annual review.')) return;
+  if(!t.done) t.done = [];
+  t.done.push({email: myEmail, name: myName, at: today()});
+  save(); renderTraining();
+  toast('Recorded. Thank you.');
+  notifyRole('cco1', 'Training completed: '+t.title, myName+' confirmed completion of "'+t.title+'".');
+}
+function delTraining(id){
+  var t = (mem.trainings||[]).find(function(x){ return x.id===id; });
+  if(!t) return;
+  if(role!=='cco1' && role!=='cco2'){ toast('Only the CCOs can delete a training.'); return; }
+  if(!confirm('Delete "'+t.title+'"?\n\nThe completion record of '+(t.done||[]).length+' person(s) is lost with it.'
+    + (t.file ? ' The material goes to the SharePoint recycle bin.' : ''))) return;
+  if(t.file && t.file.spId){ spDelete(t.file.spId).catch(function(){}); }
+  mem.trainings = mem.trainings.filter(function(x){ return x.id!==id; });
+  save(); renderTraining(); toast('Training deleted.');
+}
+async function sendTrainReminders(id, manual){
+  var list = (mem.trainings||[]).filter(function(t){ return !id || t.id===id; });
+  var sent = 0, skipped = 0;
+  for(var i=0; i<list.length; i++){
+    var t = list[i];
+    var pending = trAudList(t).filter(function(m){ return !trDone(t, m); });
+    if(!pending.length) continue;
+    var last = (t.reminders||[]).length ? t.reminders[t.reminders.length-1].at : null;
+    var due = trDays(today(), t.due);          // negative once the deadline has passed
+    if(!manual){
+      if(due > 0) continue;                     // not due yet
+      if(last && trDays(last, today()) < 15){ skipped++; continue; }
+    }
+    try{
+      await sendMail(pending.join(', '), '', 'Reminder: training pending — '+t.title,
+        'Hello,\n\nOur records show you have not yet confirmed completion of the compliance training "'+t.title+'".\n'
+        + 'Deadline: '+fmt(t.due)+(due < 0 ? ' ('+Math.abs(due)+' days overdue)' : '')+'\n'
+        + (t.desc ? '\n'+t.desc+'\n' : '')
+        + '\nPlease open the compliance system, go to the Training tab, review the material and press "I completed this training".'
+        + '\n\nCompliance training is a requirement of the Firm\'s Compliance Manual and the record of attendance is reviewed in the annual compliance review.'
+        + '\n\n— Compliance Department, Aztlan Equity Management, LLC');
+      if(!t.reminders) t.reminders = [];
+      t.reminders.push({at: today(), to: pending.length, auto: !manual});
+      sent++;
+    }catch(e){}
+  }
+  if(sent) save();
+  renderTraining();
+  if(manual) toast(sent ? 'Reminder sent for '+sent+' training(s).' : 'Nothing to remind — everyone is up to date.');
+  return sent;
+}
+function autoTrainReminders(){
+  if(role!=='cco1' && role!=='cco2') return;     // only a CCO session sends on behalf of the Firm
+  if(!(mem.trainings||[]).length) return;
+  sendTrainReminders(null, false).then(function(n){
+    if(n) toast(n+' automatic training reminder(s) sent (15-day cycle).');
+  });
+}
+function renderTraining(){
+  var list = mem.trainings || [];
+  var isCco = (role==='cco1' || role==='cco2');
+  var bar = document.getElementById('tr-admin-bar');
+  if(bar) bar.style.display = isCco ? '' : 'none';
+  var mine = list.filter(trIsMine);
+  document.getElementById('tr-mine').innerHTML = mine.length ? mine.map(function(t){
+    var d = trDone(t), left = trDays(today(), t.due);
+    var state = d ? '<span class="badge b-ok">Completed '+fmt(d.at)+'</span>'
+      : (left < 0 ? '<span class="badge b-rej">'+Math.abs(left)+' days overdue</span>'
+      : '<span class="badge b-cco2">Due in '+left+' day'+(left===1?'':'s')+'</span>');
+    return '<div class="card" style="margin-bottom:12px">'
+      + '<div class="row" style="justify-content:space-between;align-items:flex-start">'
+      +   '<div><strong style="color:var(--navy);font-size:15px">'+esc(t.title)+'</strong>'
+      +   '<br><small style="color:var(--slate)">'+TR_AUD[t.aud]+' · delivered '+fmt(t.given)+' · deadline '+fmt(t.due)+'</small></div>'
+      +   state
+      + '</div>'
+      + (t.desc ? '<p style="font-size:13.5px;margin-top:10px;line-height:1.6">'+esc(t.desc)+'</p>' : '')
+      + '<div class="row" style="margin-top:12px">'
+      +   (t.file ? '<button class="btn btn-ghost" onclick="previewTraining(\''+t.id+'\')">Open material</button>' : '<small style="color:var(--slate)">No material attached.</small>')
+      +   (d ? '' : '<button class="btn btn-gold" onclick="markTrainingDone(\''+t.id+'\')">I completed this training</button>')
+      + '</div></div>';
+  }).join('') : '<div class="card"><div class="empty">No training is assigned to you right now.</div></div>';
+
+  var adm = document.getElementById('tr-admin');
+  adm.style.display = isCco ? '' : 'none';
+  if(!isCco) return;
+  var tb = document.getElementById('tr-rows'); tb.innerHTML = '';
+  list.forEach(function(t){
+    var all = trAudList(t), done = (t.done||[]).length, left = trDays(today(), t.due);
+    var pend = all.filter(function(m){ return !trDone(t, m); });
+    var lastR = (t.reminders||[]).length ? t.reminders[t.reminders.length-1].at : null;
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td><strong>'+esc(t.title)+'</strong>'+(t.file?' &#128206;':'')
+      + (lastR ? '<br><small style="color:var(--slate)">last reminder '+fmt(lastR)+'</small>' : '')+'</td>'
+      + '<td>'+TR_AUD[t.aud]+'</td><td>'+fmt(t.given)+'</td>'
+      + '<td>'+fmt(t.due)+(left<0 && pend.length ? '<br><small style="color:#B3261E">'+Math.abs(left)+' days overdue</small>' : '')+'</td>'
+      + '<td>'+done+' / '+all.length
+      + (pend.length ? '<br><small style="color:var(--slate)" title="'+esc(pend.join(', '))+'">'+pend.length+' pending</small>' : '')+'</td>'
+      + '<td><div class="row">'
+      +   (pend.length ? '<button class="btn btn-primary" style="padding:5px 12px" onclick="sendTrainReminders(\''+t.id+'\',true)">Remind</button>' : '')
+      +   '<button class="btn btn-red" style="padding:5px 12px" onclick="delTraining(\''+t.id+'\')">Delete</button>'
+      + '</div></td>';
+    tb.appendChild(tr);
+  });
+  document.getElementById('tr-empty').style.display = list.length?'none':'';
+}
+async function previewTraining(id){
+  var t = (mem.trainings||[]).find(function(x){ return x.id===id; });
+  if(!t || !t.file) return;
+  try{
+    toast('Opening…');
+    var blob = await spGetBlob(t.file.spId);
+    var data = await blobToDataURL(blob);
+    previewData(t.file.name, t.file.mime, data, function(){
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = t.file.name; a.click();
+    });
+  }catch(e){ toast('Could not open: '+e.message); }
 }
 
 // ---------- personal securities ----------
@@ -1766,7 +1998,7 @@ function renderDash(){
   }).join('') : '<div class="empty">No quarterly sends scheduled.</div>';
 }
 
-function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); renderComments(); renderPerSec(); renderChecklists(); if(curChk) renderChecklistForm(); }
+function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); renderComments(); renderPerSec(); renderChecklists(); renderTraining(); if(curChk) renderChecklistForm(); }
 
 document.getElementById('n-type').addEventListener('change', function(){
   document.getElementById('n-date-wrap').style.display = this.value==='trimestral'?'':'none';
