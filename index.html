@@ -129,7 +129,9 @@ textarea{min-height:80px;resize:vertical}
   <button onclick="show('notifs',this)">Notifications</button>
   <button onclick="show('comments',this)">Comments</button>
   <button id="nav-checks" onclick="show('checks',this)">Checklists</button>
-  <button onclick="show('train',this)">Training</button>
+  <button id="nav-find" onclick="show('find',this)">Findings</button>
+  <button id="nav-cal" onclick="show('cal',this)">Calendar</button>
+  <button onclick="show('train',this)">Training &amp; certs</button>
   <button onclick="show('persec',this)">Personal Securities</button>
   <button id="nav-repo" onclick="show('repo',this)">Repository</button>
 </nav>
@@ -284,20 +286,63 @@ textarea{min-height:80px;resize:vertical}
   </div>
 </section>
 
-<section id="train" style="display:none">
+<section id="find" style="display:none">
   <div class="section-head">
-    <h2 style="margin:0">Training</h2>
-    <div class="row no-print" id="tr-admin-bar">
-      <button class="btn btn-ghost" onclick="sendTrainReminders(null,true)">Send reminders now</button>
-      <button class="btn btn-gold" onclick="openM('m-train')">+ Add training</button>
+    <h2 style="margin:0">Findings &amp; remediation</h2>
+    <div class="row no-print">
+      <select id="f-filter" style="width:auto;min-width:150px" onchange="renderFindings()">
+        <option value="open">Open only</option>
+        <option value="">All</option>
+        <option value="closed">Closed only</option>
+        <option value="overdue">Overdue</option>
+      </select>
+      <button class="btn btn-primary" onclick="exportFindingsWord()">Export to Word</button>
+      <button class="btn btn-gold" onclick="newFinding()">+ Add finding</button>
     </div>
   </div>
-  <p class="hint" style="margin-bottom:14px">Each training is addressed either to the CCOs or to all colleagues. Everyone it is addressed to sees it here, opens the material and confirms they completed it. While someone has not confirmed by the deadline, the system emails them a reminder <strong>every 15 days</strong>.</p>
+  <p class="hint" style="margin-bottom:14px">Every deficiency found in a checklist, in the Form ADV review or in an examination lives here until it is closed with evidence. This is the first record an SEC examiner asks for, and it answers questions 87, 96, 97 and 99 of the Annual Review Questionnaire.</p>
+  <div id="f-summary" class="row" style="margin-bottom:14px;gap:10px;flex-wrap:wrap"></div>
+  <div class="card" style="padding:0;overflow-x:auto">
+    <table>
+      <thead><tr><th>Finding</th><th>Source</th><th>Severity</th><th>Owner</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody id="f-rows"></tbody>
+    </table>
+    <div id="f-empty" class="empty">No findings recorded.</div>
+  </div>
+</section>
+
+<section id="cal" style="display:none">
+  <div class="section-head">
+    <h2 style="margin:0">Compliance calendar</h2>
+    <div class="row no-print">
+      <button class="btn btn-ghost" onclick="seedCalendar()">Load Aztlan's standard dates</button>
+      <button class="btn btn-gold" onclick="newCalItem()">+ Add obligation</button>
+    </div>
+  </div>
+  <p class="hint" style="margin-bottom:14px">The dates that carry a consequence. Recurring obligations roll forward automatically once you mark them done, and anything overdue is emailed to its owner. The Compliance Manual does not contain a calendar — this is what the September custody checklist flagged as missing.</p>
+  <div class="card" style="padding:0;overflow-x:auto">
+    <table>
+      <thead><tr><th>Obligation</th><th>Category</th><th>Frequency</th><th>Next due</th><th>Owner</th><th>Actions</th></tr></thead>
+      <tbody id="cal-rows"></tbody>
+    </table>
+    <div id="cal-empty" class="empty">No obligations loaded yet — press "Load Aztlan's standard dates" to start.</div>
+  </div>
+</section>
+
+<section id="train" style="display:none">
+  <div class="section-head">
+    <h2 style="margin:0">Training &amp; certifications</h2>
+    <div class="row no-print" id="tr-admin-bar">
+      <button class="btn btn-ghost" onclick="sendTrainReminders(null,true)">Send reminders now</button>
+      <button class="btn btn-gold" onclick="openM('m-train');trKindChanged()">+ Add</button>
+    </div>
+  </div>
+  <p class="hint" style="margin-bottom:14px">Two kinds of item, one mechanism. A <strong>training</strong> is material to review and confirm; a <strong>certification</strong> is a statement to attest to — Exhibit G, personal accounts, outside business activities, social media. Each is addressed to the CCOs or to all colleagues, each has a deadline, and whoever has not responded by that date is emailed a reminder <strong>every 15 days</strong>. The signature record is what answers question 73 of the Annual Review.</p>
   <div id="tr-mine"></div>
   <div style="height:16px"></div>
   <div class="card" id="tr-admin" style="padding:0;overflow-x:auto">
     <table>
-      <thead><tr><th>Training</th><th>Audience</th><th>Delivered</th><th>Deadline</th><th>Completed</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Item</th><th>Audience</th><th>Issued</th><th>Deadline</th><th>Signed</th><th>Actions</th></tr></thead>
       <tbody id="tr-rows"></tbody>
     </table>
     <div id="tr-empty" class="empty">No training has been loaded yet.</div>
@@ -386,11 +431,79 @@ textarea{min-height:80px;resize:vertical}
   </div>
 </div>
 
+<div class="modal-bg" id="m-find">
+  <div class="modal">
+    <h2 id="f-m-title">New finding</h2>
+    <p class="hint" id="f-src" style="margin-bottom:8px"></p>
+    <label>What was found</label>
+    <input id="f-title" placeholder="E.g. The Firm has no risk assessment matrix">
+    <label>Detail / why it matters</label>
+    <textarea id="f-desc" style="min-height:110px" placeholder="What the rule or the Manual requires, and what is missing."></textarea>
+    <label>Severity</label>
+    <select id="f-sev">
+      <option value="high">High — regulatory exposure or a missed deadline</option>
+      <option value="med" selected>Medium — required record or policy missing</option>
+      <option value="low">Low — housekeeping</option>
+    </select>
+    <label>Owner</label>
+    <input id="f-owner" placeholder="E.g. Fabiola Pastran / Alejandro Garza / MCS">
+    <label>Target date</label>
+    <input id="f-due" type="date">
+    <label>Evidence of closure (fill in when you close it)</label>
+    <textarea id="f-ev" placeholder="What document or action proves this is resolved, and where it lives."></textarea>
+    <div class="row" style="margin-top:18px">
+      <button class="btn btn-gold" onclick="saveFinding()">Save</button>
+      <button class="btn btn-ghost" onclick="closeM('m-find')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="m-cal">
+  <div class="modal">
+    <h2>Obligation</h2>
+    <label>What is due</label>
+    <input id="k-title" placeholder="E.g. Form PF annual filing">
+    <label>Category</label>
+    <select id="k-cat">
+      <option>Form ADV</option><option>Regulatory filing</option><option>Custody / audit</option>
+      <option>Code of Ethics</option><option>Training</option><option>Registration</option>
+      <option>Review / testing</option><option>Other</option>
+    </select>
+    <label>Frequency</label>
+    <select id="k-every">
+      <option value="once">One time</option>
+      <option value="monthly">Monthly</option>
+      <option value="quarterly">Quarterly</option>
+      <option value="annual" selected>Annual</option>
+    </select>
+    <label>Next due date</label>
+    <input id="k-due" type="date">
+    <label>Owner</label>
+    <input id="k-owner" placeholder="E.g. Alejandro Garza">
+    <label>Note / consequence of missing it</label>
+    <textarea id="k-note" placeholder="E.g. if not reported in FinPro by 27 December the registration moves to IAR_FTR."></textarea>
+    <div class="row" style="margin-top:18px">
+      <button class="btn btn-gold" onclick="saveCalItem()">Save</button>
+      <button class="btn btn-ghost" onclick="closeM('m-cal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="m-train">
   <div class="modal">
-    <h2>Add training</h2>
+    <h2>Add training or certification</h2>
+    <label>Type</label>
+    <select id="t-kind" onchange="trKindChanged()">
+      <option value="train">Training — material to review</option>
+      <option value="cert">Certification — a statement to attest to</option>
+    </select>
     <label>Title</label>
     <input id="t-title" placeholder="E.g. Annual Compliance Presentation 2026">
+    <div id="t-cert-wrap" style="display:none">
+      <label>Statement the person attests to</label>
+      <textarea id="t-stmt" style="min-height:90px" placeholder="E.g. I acknowledge that I have received, read and understand the Aztlan Compliance Manual and Code of Ethics, and I certify that I have complied with it."></textarea>
+      <p class="hint">Preloaded wording: <a href="#" onclick="trPreset('g');return false">Exhibit G — Manual acknowledgment</a> · <a href="#" onclick="trPreset('pa');return false">Personal accounts</a> · <a href="#" onclick="trPreset('oba');return false">Outside business activities</a> · <a href="#" onclick="trPreset('sm');return false">Social media</a></p>
+    </div>
     <label>Who has to take it</label>
     <select id="t-aud">
       <option value="colab">All colleagues</option>
@@ -403,10 +516,10 @@ textarea{min-height:80px;resize:vertical}
     <input id="t-due" type="date">
     <label>Description / what it covers</label>
     <textarea id="t-desc" placeholder="Short summary — this is what goes in the annual review record."></textarea>
-    <label>Material (PowerPoint, PDF, Word, video link file…)</label>
+    <label id="t-file-lbl">Material (PowerPoint, PDF, Word, video link file…)</label>
     <input type="file" id="t-file">
     <div class="row" style="margin-top:18px">
-      <button class="btn btn-gold" onclick="saveTraining()">Save training</button>
+      <button class="btn btn-gold" onclick="saveTraining()">Save</button>
       <button class="btn btn-ghost" onclick="closeM('m-train')">Cancel</button>
     </div>
   </div>
@@ -543,7 +656,7 @@ async function boot(){
       itemId = items.value[0].id;
       try{
         var data = JSON.parse(items.value[0].fields.Data || '{}');
-        mem = Object.assign({docs:[],notifs:[],inbox:[],files:[],emails:{},checklists:[],trainings:[],seq:1}, data);
+        mem = Object.assign({docs:[],notifs:[],inbox:[],files:[],emails:{},checklists:[],trainings:[],findings:[],cal:[],seq:1}, data);
       }catch(e){}
     } else {
       var it = await graph('/sites/'+siteId+'/lists/'+listId+'/items', {method:'POST', json:{fields:{Title:'estado', Data:JSON.stringify(mem)}}});
@@ -587,7 +700,7 @@ async function reloadState(){
   if(_saving || _dirty) return; // nor while a save is in flight
   try{
     var it = await graph('/sites/'+siteId+'/lists/'+listId+'/items/'+itemId+'?$expand=fields');
-    mem = Object.assign({docs:[],notifs:[],inbox:[],files:[],emails:{},checklists:[],trainings:[],seq:1}, JSON.parse(it.fields.Data||'{}'));
+    mem = Object.assign({docs:[],notifs:[],inbox:[],files:[],emails:{},checklists:[],trainings:[],findings:[],cal:[],seq:1}, JSON.parse(it.fields.Data||'{}'));
     renderAll();
   }catch(e){}
 }
@@ -641,7 +754,7 @@ async function sendMail(to, bcc, subj, body, attach){
 
 // ---------- navigation / roles ----------
 function show(id, btn){
-  ['dash','docs','notifs','comments','checks','train','persec','repo'].forEach(function(s){ document.getElementById(s).style.display = s===id?'':'none'; });
+  ['dash','docs','notifs','comments','checks','find','cal','train','persec','repo'].forEach(function(s){ document.getElementById(s).style.display = s===id?'':'none'; });
   document.querySelectorAll('nav button').forEach(function(b){ b.classList.remove('active'); });
   if(btn) btn.classList.add('active');
   renderAll();
@@ -659,6 +772,8 @@ function applyRole(){
   document.getElementById('ps-upload').style.display = role==='jefe'?'none':'';
   document.getElementById('nav-checks').style.display = (role==='cco1'||role==='cco2'||role==='jefe')?'':'none';
   document.getElementById('tr-admin-bar').style.display = (role==='cco1'||role==='cco2')?'':'none';
+  document.getElementById('nav-find').style.display = (role==='cco1'||role==='cco2'||role==='jefe')?'':'none';
+  document.getElementById('nav-cal').style.display  = (role==='cco1'||role==='cco2'||role==='jefe')?'':'none';
   if(role==='colab' && curChannel==='cco') curChannel = 'all';
   setChannel(curChannel);
 }
@@ -864,6 +979,14 @@ function renderChecklistForm(){
         +   '<button class="ansbtn'+(it.ans==='NA'?' on-NA':'')+'" onclick="setAns('+gi+','+ii+',\'NA\')">N/A</button>'
         + '</div>'
         + '<textarea placeholder="Comments / supporting reference…" oninput="setCmt('+gi+','+ii+',this.value)">'+esc(it.comment||'')+'</textarea>'
+        + ((it.ans==='N' && (role==='cco1'||role==='cco2')) ? (function(){
+            var f = (mem.findings||[]).find(function(x){ return x.src && x.src.chk===curChk.id && x.src.gi===gi && x.src.ii===ii; });
+            return '<div class="row" style="margin-top:8px">'
+              + (f ? '<span class="badge '+(f.status==='closed'?'b-ok':'b-cco2')+'">'+(f.status==='closed'?'Finding closed':'Finding open')+'</span>'
+                   + '<button class="btn btn-ghost" style="padding:4px 10px" onclick="editFinding(\''+f.id+'\')">Open finding</button>'
+                 : '<button class="btn btn-ghost" style="padding:4px 10px" onclick="findingFromChecklist('+gi+','+ii+')">Record as a finding</button>')
+              + '</div>';
+          })() : '')
         + '</div>';
     });
   });
@@ -1065,8 +1188,342 @@ async function emailChecklist(){
   }catch(e){ toast('Could not send: '+e.message); }
 }
 
+// ---------- findings & remediation ----------
+var SEV = {high:{label:'High', cls:'b-rej'}, med:{label:'Medium', cls:'b-cco2'}, low:{label:'Low', cls:'b-draft'}};
+var curFind = null;
+function newFinding(src){
+  curFind = null;
+  document.getElementById('f-m-title').textContent = 'New finding';
+  document.getElementById('f-src').textContent = src ? 'Source: '+src.chkName+' — question '+src.qn : '';
+  document.getElementById('f-src').style.display = src ? '' : 'none';
+  document.getElementById('f-title').value = src ? (src.q||'').slice(0,180) : '';
+  document.getElementById('f-desc').value = src ? (src.comment||'') : '';
+  document.getElementById('f-sev').value = 'med';
+  document.getElementById('f-owner').value = myName;
+  document.getElementById('f-due').value = '';
+  document.getElementById('f-ev').value = '';
+  window.__findSrc = src || null;
+  openM('m-find');
+}
+function editFinding(id){
+  var f = (mem.findings||[]).find(function(x){ return x.id===id; });
+  if(!f) return;
+  curFind = f;
+  document.getElementById('f-m-title').textContent = 'Finding';
+  document.getElementById('f-src').textContent = f.src ? 'Source: '+f.src.chkName+' — question '+f.src.qn : 'Source: added manually';
+  document.getElementById('f-src').style.display = '';
+  document.getElementById('f-title').value = f.title||'';
+  document.getElementById('f-desc').value = f.desc||'';
+  document.getElementById('f-sev').value = f.sev||'med';
+  document.getElementById('f-owner').value = f.owner||'';
+  document.getElementById('f-due').value = f.due||'';
+  document.getElementById('f-ev').value = f.evidence||'';
+  window.__findSrc = f.src || null;
+  openM('m-find');
+}
+function saveFinding(){
+  var title = document.getElementById('f-title').value.trim();
+  if(!title){ toast('Describe what was found.'); return; }
+  var o = {
+    title: title,
+    desc: document.getElementById('f-desc').value.trim(),
+    sev: document.getElementById('f-sev').value,
+    owner: document.getElementById('f-owner').value.trim(),
+    due: document.getElementById('f-due').value,
+    evidence: document.getElementById('f-ev').value.trim()
+  };
+  if(!mem.findings) mem.findings = [];
+  if(curFind){
+    Object.assign(curFind, o);
+  } else {
+    mem.findings.unshift(Object.assign({
+      id:'F'+(mem.seq++), src: window.__findSrc, status:'open',
+      created: today(), by: myName, closed: null
+    }, o));
+  }
+  save(); closeM('m-find'); renderFindings();
+  toast(curFind ? 'Finding updated.' : 'Finding recorded.');
+  curFind = null;
+}
+function closeFinding(id){
+  var f = (mem.findings||[]).find(function(x){ return x.id===id; });
+  if(!f) return;
+  if(f.status==='closed'){
+    f.status = 'open'; f.closed = null;
+    save(); renderFindings(); toast('Reopened.');
+    return;
+  }
+  if(!f.evidence){
+    toast('Record the evidence of closure first — open the finding and fill that field.');
+    editFinding(id);
+    return;
+  }
+  f.status = 'closed';
+  f.closed = {by: myName, at: today()};
+  save(); renderFindings();
+  toast('Closed. The evidence stays on the record.');
+}
+function delFinding(id){
+  var f = (mem.findings||[]).find(function(x){ return x.id===id; });
+  if(!f) return;
+  if(!confirm('Delete the finding "'+f.title.slice(0,70)+'"?\n\nIf it was real and simply resolved, close it with evidence instead — a deleted finding leaves no trace that it was ever addressed.')) return;
+  mem.findings = mem.findings.filter(function(x){ return x.id!==id; });
+  save(); renderFindings(); toast('Finding deleted.');
+}
+function findingFromChecklist(gi, ii){
+  if(!curChk) return;
+  var it = curChk.groups[gi].items[ii];
+  var exists = (mem.findings||[]).find(function(f){
+    return f.src && f.src.chk===curChk.id && f.src.gi===gi && f.src.ii===ii;
+  });
+  if(exists){ editFinding(exists.id); return; }
+  newFinding({chk:curChk.id, chkName:curChk.name, gi:gi, ii:ii, qn:it.n, q:it.q, comment:it.comment});
+}
+function renderFindings(){
+  var el = document.getElementById('f-rows');
+  if(!el) return;
+  var all = mem.findings || [], flt = document.getElementById('f-filter').value;
+  var open = all.filter(function(f){ return f.status!=='closed'; });
+  var overdue = open.filter(function(f){ return f.due && trDays(today(), f.due) < 0; });
+  document.getElementById('f-summary').innerHTML =
+      '<span class="badge b-rej">'+open.filter(function(f){return f.sev==='high';}).length+' high</span>'
+    + '<span class="badge b-cco2">'+open.filter(function(f){return f.sev==='med';}).length+' medium</span>'
+    + '<span class="badge b-draft">'+open.filter(function(f){return f.sev==='low';}).length+' low</span>'
+    + '<span class="badge b-ok">'+all.filter(function(f){return f.status==='closed';}).length+' closed</span>'
+    + (overdue.length ? '<span class="badge b-rej">'+overdue.length+' past target date</span>' : '');
+  var list = all.filter(function(f){
+    if(flt==='open') return f.status!=='closed';
+    if(flt==='closed') return f.status==='closed';
+    if(flt==='overdue') return f.status!=='closed' && f.due && trDays(today(), f.due) < 0;
+    return true;
+  });
+  var order = {high:0, med:1, low:2};
+  list = list.slice().sort(function(a,b){ return (order[a.sev]-order[b.sev]) || ((a.due||'9999')>(b.due||'9999')?1:-1); });
+  el.innerHTML = '';
+  list.forEach(function(f){
+    var late = f.status!=='closed' && f.due && trDays(today(), f.due) < 0;
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td><strong>'+esc(f.title)+'</strong>'
+      + (f.desc ? '<br><small style="color:var(--slate)">'+esc(f.desc.slice(0,150))+(f.desc.length>150?'…':'')+'</small>' : '')+'</td>'
+      + '<td><small>'+(f.src ? esc(f.src.chkName)+'<br>q'+f.src.qn : 'Manual')+'</small></td>'
+      + '<td><span class="badge '+SEV[f.sev].cls+'">'+SEV[f.sev].label+'</span></td>'
+      + '<td><small>'+esc(f.owner||'—')+'</small></td>'
+      + '<td>'+(f.due?fmt(f.due):'—')+(late?'<br><small style="color:#B3261E">overdue</small>':'')+'</td>'
+      + '<td>'+(f.status==='closed'
+          ? '<span class="badge b-ok">Closed</span><br><small style="color:var(--slate)">'+fmt(f.closed.at)+'</small>'
+          : '<span class="badge b-cco2">Open</span>')+'</td>'
+      + '<td><div class="row">'
+      +   '<button class="btn btn-ghost" style="padding:5px 10px" onclick="editFinding(\''+f.id+'\')">Open</button>'
+      +   '<button class="btn '+(f.status==='closed'?'btn-ghost':'btn-green')+'" style="padding:5px 10px" onclick="closeFinding(\''+f.id+'\')">'+(f.status==='closed'?'Reopen':'Close')+'</button>'
+      +   '<button class="btn btn-red" style="padding:5px 10px" onclick="delFinding(\''+f.id+'\')">Delete</button>'
+      + '</div></td>';
+    el.appendChild(tr);
+  });
+  document.getElementById('f-empty').style.display = list.length?'none':'';
+}
+function exportFindingsWord(){
+  var all = (mem.findings||[]).slice().sort(function(a,b){
+    var o = {high:0,med:1,low:2}; return (o[a.sev]-o[b.sev]);
+  });
+  if(!all.length){ toast('Nothing to export yet.'); return; }
+  var rows = all.map(function(f){
+    return '<tr>'
+      + '<td>'+esc(f.title)+(f.desc?'<br><i>'+esc(f.desc)+'</i>':'')+'</td>'
+      + '<td>'+(f.src?esc(f.src.chkName)+' q'+f.src.qn:'Manual')+'</td>'
+      + '<td>'+SEV[f.sev].label+'</td><td>'+esc(f.owner||'')+'</td>'
+      + '<td>'+(f.due?fmt(f.due):'')+'</td>'
+      + '<td>'+(f.status==='closed'?'Closed '+fmt(f.closed.at):'Open')+'</td>'
+      + '<td>'+esc(f.evidence||'')+'</td></tr>';
+  }).join('');
+  var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
+    + '<head><meta charset="utf-8"><title>Findings</title></head><body style="font-family:Calibri">'
+    + '<h2 style="color:#221D55">AZTLAN EQUITY MANAGEMENT, LLC</h2><h3>Compliance findings and remediation log</h3>'
+    + '<p style="font-size:10pt">As of '+fmt(today())+' · '+all.filter(function(f){return f.status!=='closed';}).length+' open of '+all.length+' total</p>'
+    + '<table border="1" cellspacing="0" cellpadding="5" style="border-collapse:collapse;width:100%;font-family:Calibri;font-size:9.5pt">'
+    + '<tr><th style="background:#221D55;color:#fff;width:30%">Finding</th><th style="background:#221D55;color:#fff">Source</th>'
+    + '<th style="background:#221D55;color:#fff">Severity</th><th style="background:#221D55;color:#fff">Owner</th>'
+    + '<th style="background:#221D55;color:#fff">Target</th><th style="background:#221D55;color:#fff">Status</th>'
+    + '<th style="background:#221D55;color:#fff;width:22%">Evidence of closure</th></tr>'
+    + rows + '</table></body></html>';
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿', html], {type:'application/msword'}));
+  a.download = 'Aztlan - Findings and remediation log.doc';
+  a.click();
+  toast('Word file downloaded.');
+}
+
+// ---------- compliance calendar ----------
+var EVERY = {once:'One time', monthly:'Monthly', quarterly:'Quarterly', annual:'Annual'};
+var curCal = null;
+function newCalItem(){
+  curCal = null;
+  ['k-title','k-owner','k-note'].forEach(function(id){ document.getElementById(id).value=''; });
+  document.getElementById('k-due').value = '';
+  document.getElementById('k-every').value = 'annual';
+  openM('m-cal');
+}
+function editCalItem(id){
+  var k = (mem.cal||[]).find(function(x){ return x.id===id; });
+  if(!k) return;
+  curCal = k;
+  document.getElementById('k-title').value = k.title||'';
+  document.getElementById('k-cat').value = k.cat||'Other';
+  document.getElementById('k-every').value = k.every||'annual';
+  document.getElementById('k-due').value = k.due||'';
+  document.getElementById('k-owner').value = k.owner||'';
+  document.getElementById('k-note').value = k.note||'';
+  openM('m-cal');
+}
+function saveCalItem(){
+  var title = document.getElementById('k-title').value.trim();
+  var due = document.getElementById('k-due').value;
+  if(!title || !due){ toast('A title and a due date are required.'); return; }
+  var o = {
+    title: title, cat: document.getElementById('k-cat').value,
+    every: document.getElementById('k-every').value, due: due,
+    owner: document.getElementById('k-owner').value.trim(),
+    note: document.getElementById('k-note').value.trim()
+  };
+  if(!mem.cal) mem.cal = [];
+  if(curCal) Object.assign(curCal, o);
+  else mem.cal.push(Object.assign({id:'C'+(mem.seq++), done:[], lastRem:null}, o));
+  save(); closeM('m-cal'); renderCal();
+  toast(curCal ? 'Obligation updated.' : 'Obligation added.');
+  curCal = null;
+}
+function rollDate(iso, every){
+  var d = new Date(iso+'T12:00:00');
+  if(every==='monthly') d.setMonth(d.getMonth()+1);
+  else if(every==='quarterly') d.setMonth(d.getMonth()+3);
+  else if(every==='annual') d.setFullYear(d.getFullYear()+1);
+  else return null;
+  return d.toISOString().slice(0,10);
+}
+function doneCalItem(id){
+  var k = (mem.cal||[]).find(function(x){ return x.id===id; });
+  if(!k) return;
+  if(!confirm('Mark "'+k.title+'" as done for '+fmt(k.due)+'?')) return;
+  if(!k.done) k.done = [];
+  k.done.push({at: today(), by: myName, forDate: k.due});
+  var nxt = rollDate(k.due, k.every);
+  if(nxt){ k.due = nxt; k.lastRem = null; toast('Done. Next due '+fmt(nxt)+'.'); }
+  else { k.closed = true; toast('Done.'); }
+  save(); renderCal();
+}
+function delCalItem(id){
+  var k = (mem.cal||[]).find(function(x){ return x.id===id; });
+  if(!k) return;
+  if(!confirm('Remove "'+k.title+'" from the calendar?')) return;
+  mem.cal = mem.cal.filter(function(x){ return x.id!==id; });
+  save(); renderCal(); toast('Removed.');
+}
+function seedCalendar(){
+  if(!mem.cal) mem.cal = [];
+  var seed = [
+    ['Form ADV annual updating amendment','Form ADV','annual','2027-03-31','Alejandro Garza','Due within 90 days of fiscal year end. The 2026 amendment was filed 31 March 2026.'],
+    ['Form ADV other-than-annual amendment — audit results','Form ADV','once','2026-12-31','Alejandro Garza','OPEN NOW: Schedule D 7.B.(1) q23(h) is marked "Report Not Yet Received". File promptly once the final audit report arrives.'],
+    ['Deliver Part 2A brochure to clients (annual offer)','Form ADV','annual','2027-04-30','Fabiola Pastran','Within 120 days of fiscal year end. The Records Retention Schedule requires a dated delivery record, kept five years.'],
+    ['Form PF annual filing','Regulatory filing','annual','2027-04-30','Alejandro Garza','Confirm whether the Firm is a filer for the period.'],
+    ['Audited financial statements distributed to investors','Custody / audit','annual','2027-04-30','Alejandro Garza','Within 120 days of fiscal year end, for every fund relying on the audit exception. This was NOT met for the last period.'],
+    ['Form D annual amendment','Regulatory filing','annual','2027-02-28','Alejandro Garza','On the anniversary of the first filing. Form D 021-275315 is on the ADV.'],
+    ['IAR continuing education reported in FinPro','Registration','annual','2026-12-27','Fabiola Pastran','HARD DATE: if it is not reported by 27 December the registration moves to IAR_FTR in January.'],
+    ['Personal securities transaction reports collected','Code of Ethics','quarterly','2027-01-30','Fabiola Pastran','Within 30 days of quarter end. Q3 2026 was collected late.'],
+    ['Documentation of the annual compliance review','Review / testing','annual','2027-02-28','Fabiola Pastran','The date the Firm\'s own Records Retention Schedule sets for this record.'],
+    ['Annual compliance training delivered and attendance recorded','Training','annual','2027-03-31','Fabiola Pastran','Record the date, a content summary and each attendee — Annual Review questions 63, 65 and 82.'],
+    ['Compliance Manual acknowledgment (Exhibit G) recirculated','Code of Ethics','annual','2027-01-31','Fabiola Pastran','Annual Review question 73. Pending for 2026, and due again once MCS delivers the consolidated manual.'],
+    ['Annual custody review (separate from the program review)','Custody / audit','annual','2027-06-30','Fabiola Pastran','Flagged as missing by the September 2026 custody checklist.'],
+    ['Books and records retrieval test','Review / testing','annual','2027-06-30','Fabiola Pastran','No test in the past two years — flagged by the March 2026 Books and Records checklist.'],
+    ['Business continuity plan tested and documented','Review / testing','annual','2027-09-30','Alejandro Garza','The Manual makes the Managing Member responsible for testing and keeping the documentation.'],
+    ['Incident Response Plan tested','Review / testing','annual','2027-09-30','Alejandro Garza','Annual Review question 84. MCS issued the plan on 1 September 2026 and it is not yet in the Manual.']
+  ];
+  var added = 0;
+  seed.forEach(function(s){
+    if((mem.cal||[]).some(function(x){ return x.title===s[0]; })) return;
+    mem.cal.push({id:'C'+(mem.seq++), title:s[0], cat:s[1], every:s[2], due:s[3], owner:s[4], note:s[5], done:[], lastRem:null});
+    added++;
+  });
+  save(); renderCal();
+  toast(added ? added+' obligations loaded. Review the dates and owners — they are the standard ones, adjust to your fiscal year.' : 'They were already loaded.');
+}
+async function calRemind(id, manual){
+  var list = (mem.cal||[]).filter(function(k){ return (!id || k.id===id) && !k.closed; });
+  var e = mem.emails||{}, sent = 0;
+  for(var i=0;i<list.length;i++){
+    var k = list[i], left = trDays(today(), k.due);
+    if(!manual){
+      if(left > 14) continue;
+      if(k.lastRem && trDays(k.lastRem, today()) < 15) continue;
+    }
+    var to = e.cco1 || myEmail;
+    var cc = e.cco2 && !eqMail(e.cco2, to) ? e.cco2 : '';
+    try{
+      await sendMail(to, cc, (left<0?'OVERDUE':'Upcoming')+': '+k.title,
+        'Compliance calendar reminder.\n\n'
+        + k.title+'\nCategory: '+k.cat+'\nDue: '+fmt(k.due)
+        + (left<0 ? ' — '+Math.abs(left)+' days OVERDUE' : ' — in '+left+' day(s)')
+        + '\nOwner: '+(k.owner||'unassigned')+'\n'
+        + (k.note ? '\n'+k.note+'\n' : '')
+        + '\n— Compliance Department, Aztlan Equity Management, LLC');
+      k.lastRem = today(); sent++;
+    }catch(err){}
+  }
+  if(sent) save();
+  renderCal();
+  if(manual) toast(sent ? 'Reminder sent for '+sent+' obligation(s).' : 'Nothing due in the next two weeks.');
+  return sent;
+}
+function renderCal(){
+  var tb = document.getElementById('cal-rows');
+  if(!tb) return;
+  var list = (mem.cal||[]).filter(function(k){ return !k.closed; })
+    .slice().sort(function(a,b){ return a.due > b.due ? 1 : -1; });
+  tb.innerHTML = '';
+  list.forEach(function(k){
+    var left = trDays(today(), k.due);
+    var when = left < 0 ? '<span class="badge b-rej">'+Math.abs(left)+' days overdue</span>'
+      : left <= 30 ? '<span class="badge b-cco2">in '+left+' day'+(left===1?'':'s')+'</span>'
+      : '<span style="color:var(--slate);font-size:12.5px">in '+left+' days</span>';
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td><strong>'+esc(k.title)+'</strong>'
+      + (k.note ? '<br><small style="color:var(--slate)">'+esc(k.note)+'</small>' : '')
+      + (k.lastRem ? '<br><small style="color:var(--slate)">last reminder '+fmt(k.lastRem)+'</small>' : '')+'</td>'
+      + '<td><small>'+esc(k.cat)+'</small></td><td><small>'+EVERY[k.every]+'</small></td>'
+      + '<td>'+fmt(k.due)+'<br>'+when+'</td>'
+      + '<td><small>'+esc(k.owner||'—')+'</small></td>'
+      + '<td><div class="row">'
+      +   '<button class="btn btn-green" style="padding:5px 10px" onclick="doneCalItem(\''+k.id+'\')">Done</button>'
+      +   '<button class="btn btn-ghost" style="padding:5px 10px" onclick="editCalItem(\''+k.id+'\')">Edit</button>'
+      +   '<button class="btn btn-primary" style="padding:5px 10px" onclick="calRemind(\''+k.id+'\',true)">Remind</button>'
+      +   '<button class="btn btn-red" style="padding:5px 10px" onclick="delCalItem(\''+k.id+'\')">Remove</button>'
+      + '</div></td>';
+    tb.appendChild(tr);
+  });
+  document.getElementById('cal-empty').style.display = list.length?'none':'';
+}
+
 // ---------- training ----------
 var TR_AUD = {colab:'All colleagues', cco:'CCOs only', all:'Everyone'};
+var TR_PRESETS = {
+  g:  'I acknowledge that I have received, read and understand the Aztlan Equity Management, LLC Compliance Manual and Code of Ethics. I certify that I have complied with the Manual and the Code of Ethics during the period covered, and I agree to continue to comply with them. I understand that failure to do so may result in disciplinary action, termination, regulatory sanctions and potential civil or criminal penalties.',
+  pa: 'I certify that I have disclosed to the Firm every Reportable Personal Account in which securities are held for my direct or indirect benefit, including accounts held by immediate family members sharing my household, and that the Personal Accounts Disclosure Form I have submitted is complete and accurate.',
+  oba:'I certify that I have disclosed to the Firm every outside business activity in which I am engaged, including any directorship, consultancy, employment or compensated role outside Aztlan, and that I will obtain the Firm’s approval before undertaking any new outside business activity.',
+  sm: 'I certify that I have read the Firm’s social media policy, that I have disclosed every social media account I use for business purposes, and that I have not communicated with clients or investors about the Firm’s business on any platform that the Firm does not capture and retain.'
+};
+function trKindChanged(){
+  var cert = document.getElementById('t-kind').value==='cert';
+  document.getElementById('t-cert-wrap').style.display = cert?'':'none';
+  document.getElementById('t-file-lbl').textContent = cert
+    ? 'Form to attach, if there is one (optional)'
+    : 'Material (PowerPoint, PDF, Word, video link file…)';
+  document.getElementById('t-title').placeholder = cert
+    ? 'E.g. Compliance Manual Acknowledgment (Exhibit G) 2026'
+    : 'E.g. Annual Compliance Presentation 2026';
+}
+function trPreset(k){
+  document.getElementById('t-stmt').value = TR_PRESETS[k] || '';
+  var titles = {g:'Compliance Manual Acknowledgment (Exhibit G)', pa:'Personal Accounts Disclosure', oba:'Outside Business Activities Certification', sm:'Social Media Usage Certification'};
+  if(!document.getElementById('t-title').value.trim()) document.getElementById('t-title').value = titles[k]+' '+new Date().getFullYear();
+}
 function trDays(a, b){ return Math.round((new Date(b) - new Date(a)) / 86400000); }
 function trAudList(t){
   var e = mem.emails || {}, out = [];
@@ -1100,8 +1557,13 @@ async function saveTraining(){
     catch(e){ toast('Could not upload the file: '+e.message); return; }
   }
   if(!mem.trainings) mem.trainings = [];
+  var kind = document.getElementById('t-kind').value;
+  var stmt = document.getElementById('t-stmt').value.trim();
+  if(kind==='cert' && !stmt){ toast('Write the statement the person has to attest to.'); return; }
   var t = {
     id:'T'+(mem.seq++),
+    kind: kind,
+    stmt: stmt,
     title: title,
     aud: document.getElementById('t-aud').value,
     given: document.getElementById('t-given').value || today(),
@@ -1114,17 +1576,19 @@ async function saveTraining(){
     reminders: []
   };
   mem.trainings.unshift(t);
-  ['t-title','t-desc'].forEach(function(id){ document.getElementById(id).value = ''; });
+  ['t-title','t-desc','t-stmt'].forEach(function(id){ document.getElementById(id).value = ''; });
   document.getElementById('t-file').value = '';
   save(); closeM('m-train'); renderTraining();
-  toast('Training added for '+TR_AUD[t.aud]+'. Deadline '+fmt(t.due)+'.');
+  toast((t.kind==='cert'?'Certification':'Training')+' added for '+TR_AUD[t.aud]+'. Deadline '+fmt(t.due)+'.');
   try{
     var to = trAudList(t).join(', ');
-    if(to) await sendMail(to, '', 'New training: '+t.title,
-      'Hello,\n\nA new compliance training has been made available: "'+t.title+'".\n'
-      + (t.desc ? '\n'+t.desc+'\n' : '')
-      + '\nDeadline to complete it: '+fmt(t.due)
-      + '\n\nOpen the compliance system, go to the Training tab, review the material and press "I completed this training".'
+    var cert = t.kind==='cert';
+    if(to) await sendMail(to, '', (cert?'Certification required: ':'New training: ')+t.title,
+      'Hello,\n\n'+(cert
+        ? 'A compliance certification is required from you: "'+t.title+'".\n\nYou will be asked to attest to the following:\n\n'+t.stmt+'\n'
+        : 'A new compliance training has been made available: "'+t.title+'".\n'+(t.desc ? '\n'+t.desc+'\n' : ''))
+      + '\nDeadline: '+fmt(t.due)
+      + '\n\nOpen the compliance system, go to the Training tab'+(cert?' and sign the certification.':', review the material and press "I completed this training".')
       + '\n\n— Compliance Department, Aztlan Equity Management, LLC');
   }catch(e){}
 }
@@ -1132,12 +1596,16 @@ function markTrainingDone(id){
   var t = (mem.trainings||[]).find(function(x){ return x.id===id; });
   if(!t) return;
   if(trDone(t)){ toast('You already confirmed this one.'); return; }
-  if(!confirm('Confirm that you reviewed "'+t.title+'" in full?\n\nYour name and today\'s date are recorded as evidence for the annual review.')) return;
+  var ask = t.kind==='cert'
+    ? 'You are signing the following certification:\n\n'+t.stmt+'\n\nYour name and today\'s date are recorded as your signature. Do you certify this is true?'
+    : 'Confirm that you reviewed "'+t.title+'" in full?\n\nYour name and today\'s date are recorded as evidence for the annual review.';
+  if(!confirm(ask)) return;
   if(!t.done) t.done = [];
-  t.done.push({email: myEmail, name: myName, at: today()});
+  t.done.push({email: myEmail, name: myName, at: today(), stmt: t.kind==='cert' ? t.stmt : undefined});
   save(); renderTraining();
   toast('Recorded. Thank you.');
-  notifyRole('cco1', 'Training completed: '+t.title, myName+' confirmed completion of "'+t.title+'".');
+  notifyRole('cco1', (t.kind==='cert'?'Certification signed: ':'Training completed: ')+t.title,
+    myName+(t.kind==='cert'?' signed "':' confirmed completion of "')+t.title+'".');
 }
 function delTraining(id){
   var t = (mem.trainings||[]).find(function(x){ return x.id===id; });
@@ -1198,16 +1666,19 @@ function renderTraining(){
     var state = d ? '<span class="badge b-ok">Completed '+fmt(d.at)+'</span>'
       : (left < 0 ? '<span class="badge b-rej">'+Math.abs(left)+' days overdue</span>'
       : '<span class="badge b-cco2">Due in '+left+' day'+(left===1?'':'s')+'</span>');
+    var cert = t.kind==='cert';
     return '<div class="card" style="margin-bottom:12px">'
       + '<div class="row" style="justify-content:space-between;align-items:flex-start">'
-      +   '<div><strong style="color:var(--navy);font-size:15px">'+esc(t.title)+'</strong>'
-      +   '<br><small style="color:var(--slate)">'+TR_AUD[t.aud]+' · delivered '+fmt(t.given)+' · deadline '+fmt(t.due)+'</small></div>'
+      +   '<div><span class="badge '+(cert?'b-dir':'b-draft')+'">'+(cert?'Certification':'Training')+'</span> '
+      +   '<strong style="color:var(--navy);font-size:15px">'+esc(t.title)+'</strong>'
+      +   '<br><small style="color:var(--slate)">'+TR_AUD[t.aud]+' · '+(cert?'issued ':'delivered ')+fmt(t.given)+' · deadline '+fmt(t.due)+'</small></div>'
       +   state
       + '</div>'
       + (t.desc ? '<p style="font-size:13.5px;margin-top:10px;line-height:1.6">'+esc(t.desc)+'</p>' : '')
+      + (cert && t.stmt ? '<blockquote style="margin:12px 0 0;padding:10px 14px;border-left:3px solid var(--gold);background:#FBFAF6;font-size:13.5px;line-height:1.6">'+esc(t.stmt)+'</blockquote>' : '')
       + '<div class="row" style="margin-top:12px">'
-      +   (t.file ? '<button class="btn btn-ghost" onclick="previewTraining(\''+t.id+'\')">Open material</button>' : '<small style="color:var(--slate)">No material attached.</small>')
-      +   (d ? '' : '<button class="btn btn-gold" onclick="markTrainingDone(\''+t.id+'\')">I completed this training</button>')
+      +   (t.file ? '<button class="btn btn-ghost" onclick="previewTraining(\''+t.id+'\')">'+(cert?'Open form':'Open material')+'</button>' : (cert?'':'<small style="color:var(--slate)">No material attached.</small>'))
+      +   (d ? '' : '<button class="btn btn-gold" onclick="markTrainingDone(\''+t.id+'\')">'+(cert?'I certify the above':'I completed this training')+'</button>')
       + '</div></div>';
   }).join('') : '<div class="card"><div class="empty">No training is assigned to you right now.</div></div>';
 
@@ -1220,7 +1691,7 @@ function renderTraining(){
     var pend = all.filter(function(m){ return !trDone(t, m); });
     var lastR = (t.reminders||[]).length ? t.reminders[t.reminders.length-1].at : null;
     var tr = document.createElement('tr');
-    tr.innerHTML = '<td><strong>'+esc(t.title)+'</strong>'+(t.file?' &#128206;':'')
+    tr.innerHTML = '<td><span class="badge '+(t.kind==='cert'?'b-dir':'b-draft')+'">'+(t.kind==='cert'?'Cert':'Train')+'</span> <strong>'+esc(t.title)+'</strong>'+(t.file?' &#128206;':'')
       + (lastR ? '<br><small style="color:var(--slate)">last reminder '+fmt(lastR)+'</small>' : '')+'</td>'
       + '<td>'+TR_AUD[t.aud]+'</td><td>'+fmt(t.given)+'</td>'
       + '<td>'+fmt(t.due)+(left<0 && pend.length ? '<br><small style="color:#B3261E">'+Math.abs(left)+' days overdue</small>' : '')+'</td>'
@@ -1998,7 +2469,7 @@ function renderDash(){
   }).join('') : '<div class="empty">No quarterly sends scheduled.</div>';
 }
 
-function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); renderComments(); renderPerSec(); renderChecklists(); renderTraining(); if(curChk) renderChecklistForm(); }
+function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); renderComments(); renderPerSec(); renderChecklists(); renderTraining(); renderFindings(); renderCal(); if(curChk) renderChecklistForm(); }
 
 document.getElementById('n-type').addEventListener('change', function(){
   document.getElementById('n-date-wrap').style.display = this.value==='trimestral'?'':'none';
