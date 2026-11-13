@@ -2310,7 +2310,13 @@ async function remindNotifAcks(id, manual){
   for(var i=0;i<list.length;i++){
     var n = list[i], pend = notifPending(n);
     if(!pend.length) continue;
-    if(!manual && n.lastAckRem && trDays(n.lastAckRem, today()) < 15) continue;
+    if(!manual){
+      // Only chase confirmations for notices that are still current. Without this,
+      // enabling the feature would fire a reminder for every notice ever sent.
+      var lastSend = (n.sent||[])[(n.sent||[]).length-1];
+      if(!lastSend || trDays(lastSend, today()) > 60) continue;
+      if(n.lastAckRem && trDays(n.lastAckRem, today()) < 15) continue;
+    }
     try{
       await sendMail(pend.join(', '), '', 'Confirmation pending: '+n.subj,
         'Hello,\n\nOur records show you have not yet confirmed receipt of the compliance notice "'+n.subj+'", '
