@@ -72,6 +72,20 @@ textarea{min-height:80px;resize:vertical}
 .searchbar input,.searchbar select{width:auto;flex:1;min-width:140px}
 .section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px}
 .hint{font-size:12px;color:var(--slate);margin-top:6px}
+.q-card{background:#fff;border-radius:10px;padding:16px 18px;margin-bottom:10px;box-shadow:0 1px 3px rgba(34,29,85,.08);border-left:4px solid #e5e2da}
+.q-card.answered{border-left-color:var(--green)}
+.q-card .qtext{font-size:14px;line-height:1.55;margin-bottom:10px}
+.q-card .qnum{color:var(--slate);font-weight:700;margin-right:6px}
+.ansbtns{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.ansbtn{padding:7px 20px;border:1.5px solid #cfcbc0;background:#fff;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;color:var(--slate)}
+.ansbtn:hover{border-color:var(--navy)}
+.ansbtn.on-Y{background:var(--green);border-color:var(--green);color:#fff}
+.ansbtn.on-N{background:var(--red);border-color:var(--red);color:#fff}
+.ansbtn.on-NA{background:var(--slate);border-color:var(--slate);color:#fff}
+.q-card textarea{min-height:52px;font-size:13px}
+.grp-title{background:var(--navy);color:#fff;padding:9px 16px;border-radius:8px;font-weight:700;font-size:14px;margin:18px 0 10px}
+.progwrap{height:9px;background:#e5e2da;border-radius:6px;overflow:hidden;margin:8px 0 2px}
+.progbar{height:100%;background:var(--green);transition:width .25s}
 .docx-view{background:#fff;border:1px solid #e5e2da;border-radius:8px;padding:22px;max-height:65vh;overflow:auto;font-size:14px;line-height:1.6}
 .docx-view img{max-width:100%}
 .sheet-view{max-height:65vh;overflow:auto}
@@ -114,6 +128,7 @@ textarea{min-height:80px;resize:vertical}
   <button id="nav-docs" onclick="show('docs',this)">Documents</button>
   <button onclick="show('notifs',this)">Notifications</button>
   <button onclick="show('comments',this)">Comments</button>
+  <button id="nav-checks" onclick="show('checks',this)">Checklists</button>
   <button onclick="show('persec',this)">Personal Securities</button>
   <button id="nav-repo" onclick="show('repo',this)">Repository</button>
 </nav>
@@ -223,6 +238,49 @@ textarea{min-height:80px;resize:vertical}
   </div>
   <div style="height:16px"></div>
   <div id="c-list"></div>
+</section>
+
+<section id="checks" style="display:none">
+  <div id="chk-list-view">
+    <div class="section-head">
+      <h2 style="margin:0">Compliance checklists</h2>
+      <div class="row no-print">
+        <input type="file" id="chk-file" accept=".docx" style="display:none" onchange="importChecklist(this.files[0])">
+        <button class="btn btn-gold" onclick="document.getElementById('chk-file').click()">+ Import checklist (.docx)</button>
+      </div>
+    </div>
+    <p class="hint" style="margin-bottom:14px">Upload the Word checklist received from Mission Critical Services. The questions are turned into a click-through form — no editing in Word — and can be exported back to Word or emailed to MCS when finished.</p>
+    <div class="card" style="padding:0;overflow-x:auto">
+      <table>
+        <thead><tr><th>Checklist</th><th>Imported</th><th>Progress</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="chk-rows"></tbody>
+      </table>
+      <div id="chk-empty" class="empty">No checklists imported yet.</div>
+    </div>
+  </div>
+
+  <div id="chk-form-view" style="display:none">
+    <div class="section-head">
+      <div>
+        <h2 style="margin:0" id="chk-title"></h2>
+        <small style="color:var(--slate)" id="chk-sub"></small>
+      </div>
+      <div class="row no-print">
+        <button class="btn btn-ghost" onclick="closeChecklist()">← Back</button>
+        <button class="btn btn-ghost" onclick="toggleUnanswered()" id="chk-filter">Show only unanswered</button>
+        <button class="btn btn-primary" onclick="exportChecklistWord()">Export to Word</button>
+        <button class="btn btn-gold" onclick="emailChecklist()">Email to MCS</button>
+      </div>
+    </div>
+    <div class="card" style="padding:14px 18px;margin-bottom:14px">
+      <div class="row" style="justify-content:space-between">
+        <strong id="chk-count" style="font-size:13.5px;color:var(--navy)"></strong>
+        <small style="color:var(--slate)">Answers save automatically</small>
+      </div>
+      <div class="progwrap"><div class="progbar" id="chk-prog" style="width:0%"></div></div>
+    </div>
+    <div id="chk-body"></div>
+  </div>
 </section>
 
 <section id="persec" style="display:none">
@@ -477,9 +535,11 @@ async function persist(){
   if(_dirty){ _dirty = false; persist(); }
 }
 async function reloadState(){
+  if(curChk) return;            // never refresh while a checklist is being filled
+  if(_saving || _dirty) return; // nor while a save is in flight
   try{
     var it = await graph('/sites/'+siteId+'/lists/'+listId+'/items/'+itemId+'?$expand=fields');
-    mem = Object.assign({docs:[],notifs:[],inbox:[],files:[],emails:{},seq:1}, JSON.parse(it.fields.Data||'{}'));
+    mem = Object.assign({docs:[],notifs:[],inbox:[],files:[],emails:{},checklists:[],seq:1}, JSON.parse(it.fields.Data||'{}'));
     renderAll();
   }catch(e){}
 }
@@ -529,7 +589,7 @@ async function sendMail(to, bcc, subj, body, attach){
 
 // ---------- navigation / roles ----------
 function show(id, btn){
-  ['dash','docs','notifs','comments','persec','repo'].forEach(function(s){ document.getElementById(s).style.display = s===id?'':'none'; });
+  ['dash','docs','notifs','comments','checks','persec','repo'].forEach(function(s){ document.getElementById(s).style.display = s===id?'':'none'; });
   document.querySelectorAll('nav button').forEach(function(b){ b.classList.remove('active'); });
   if(btn) btn.classList.add('active');
   renderAll();
@@ -545,6 +605,7 @@ function applyRole(){
   document.getElementById('ch-cco').style.display = (role==='cco1'||role==='cco2'||role==='jefe')?'':'none';
   document.getElementById('c-compose').style.display = role==='jefe'?'none':'';
   document.getElementById('ps-upload').style.display = role==='jefe'?'none':'';
+  document.getElementById('nav-checks').style.display = (role==='cco1'||role==='cco2'||role==='jefe')?'':'none';
   if(role==='colab' && curChannel==='cco') curChannel = 'all';
   setChannel(curChannel);
 }
@@ -573,6 +634,243 @@ function openInbox(){
   mine.forEach(function(n){ n.read = true; });
   save(); renderBell();
   document.getElementById('m-inbox').classList.add('open');
+}
+
+// ---------- compliance checklists ----------
+var curChk = null, chkOnlyUnanswered = false;
+var MAMMOTH_URL = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js';
+
+function fileToArrayBuffer(f){
+  return new Promise(function(res, rej){
+    var r = new FileReader();
+    r.onload = function(){ res(r.result); };
+    r.onerror = rej;
+    r.readAsArrayBuffer(f);
+  });
+}
+function txt(el){ return (el.textContent || '').replace(/\s+/g,' ').trim(); }
+
+function parseChecklistHtml(html){
+  var doc = new DOMParser().parseFromString(html, 'text/html');
+  var groups = [], cur = null, n = 0;
+  var rows = doc.querySelectorAll('tr');
+  for(var i=0;i<rows.length;i++){
+    var tds = rows[i].querySelectorAll('td,th');
+    if(!tds.length) continue;
+    var cells = Array.prototype.map.call(tds, txt);
+    var first = cells[0];
+    if(!first) continue;
+    var uniq = cells.filter(function(c){ return c; });
+    var allSame = uniq.length > 1 && uniq.every(function(c){ return c === uniq[0]; });
+    var isHeader = /^(questions?|action item)$/i.test(first)
+      || (cells.length >= 4 && /^yes$/i.test(cells[1]||'') && /^no$/i.test(cells[2]||''));
+    if(isHeader) continue;
+    // section header: one cell, or every cell identical, and short-ish
+    if((cells.length === 1 || allSame) && first.length < 120){
+      cur = {title: first, items: []};
+      groups.push(cur);
+      continue;
+    }
+    if(first.length < 12) continue;           // noise
+    if(!cur){ cur = {title:'', items:[]}; groups.push(cur); }
+    n++;
+    cur.items.push({n:n, q:first, ans:'', comment:''});
+  }
+  return {groups: groups.filter(function(g){ return g.items.length; }), total: n};
+}
+
+async function importChecklist(f){
+  if(!f) return;
+  if(!/\.docx$/i.test(f.name)){ toast('Please choose a .docx file.'); return; }
+  toast('Reading the checklist…');
+  var ok = await new Promise(function(res){ loadLib(MAMMOTH_URL, res); });
+  if(!ok){ toast('Could not load the Word reader (needs internet the first time).'); return; }
+  var parsed;
+  try{
+    var buf = await fileToArrayBuffer(f);
+    var out = await mammoth.convertToHtml({arrayBuffer: buf});
+    parsed = parseChecklistHtml(out.value);
+  }catch(e){ toast('Could not read the file: '+e.message); return; }
+  if(!parsed.total){ toast('No question table was found in that document.'); return; }
+  var meta = null;
+  try{ toast('Saving the original to SharePoint…'); meta = await spUpload(f.name, f); }catch(e){}
+  if(!mem.checklists) mem.checklists = [];
+  var c = {
+    id:'K'+(mem.seq++),
+    name: f.name.replace(/\.docx$/i,'').replace(/\s*-\s*DK\s*-\s*\d+$/,''),
+    fileName: f.name,
+    imported: today(),
+    by: myName,
+    source: meta,
+    groups: parsed.groups,
+    total: parsed.total,
+    status: 'draft'
+  };
+  mem.checklists.unshift(c);
+  document.getElementById('chk-file').value = '';
+  save(); renderChecklists();
+  toast(parsed.total+' questions imported. Open it to start answering.');
+  openChecklist(c.id);
+}
+
+function chkAnswered(c){
+  var a = 0;
+  (c.groups||[]).forEach(function(g){ g.items.forEach(function(it){ if(it.ans) a++; }); });
+  return a;
+}
+function renderChecklists(){
+  var tb = document.getElementById('chk-rows');
+  if(!tb) return;
+  var list = mem.checklists || [];
+  tb.innerHTML = '';
+  list.forEach(function(c){
+    var a = chkAnswered(c), pct = c.total ? Math.round(a*100/c.total) : 0;
+    var badge = c.status==='sent' ? '<span class="badge b-ok">Sent to MCS</span>'
+      : (a>=c.total ? '<span class="badge b-ok">Complete</span>' : '<span class="badge b-cco2">In progress</span>');
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td><strong>'+esc(c.name)+'</strong><br><small style="color:var(--slate)">'+esc(c.fileName)+'</small></td>'
+      + '<td>'+fmt(c.imported)+'<br><small style="color:var(--slate)">'+esc(c.by||'')+'</small></td>'
+      + '<td>'+a+' / '+c.total+' ('+pct+'%)<div class="progwrap" style="width:120px"><div class="progbar" style="width:'+pct+'%"></div></div></td>'
+      + '<td>'+badge+'</td>'
+      + '<td><div class="row"><button class="btn btn-gold" style="padding:5px 12px" onclick="openChecklist(\''+c.id+'\')">Open</button>'
+      + '<button class="btn btn-ghost" style="padding:5px 12px" onclick="exportChecklistWord(\''+c.id+'\')">Word</button>'
+      + '<button class="btn btn-red" style="padding:5px 12px" onclick="delChecklist(\''+c.id+'\')">Delete</button></div></td>';
+    tb.appendChild(tr);
+  });
+  document.getElementById('chk-empty').style.display = list.length?'none':'';
+}
+function openChecklist(id){
+  curChk = (mem.checklists||[]).find(function(x){ return x.id===id; }) || null;
+  if(!curChk) return;
+  chkOnlyUnanswered = false;
+  document.getElementById('chk-list-view').style.display='none';
+  document.getElementById('chk-form-view').style.display='';
+  document.getElementById('chk-title').textContent = curChk.name;
+  document.getElementById('chk-sub').textContent = curChk.fileName+' · imported '+fmt(curChk.imported)+' by '+(curChk.by||'');
+  renderChecklistForm();
+}
+function closeChecklist(){
+  curChk = null;
+  document.getElementById('chk-form-view').style.display='none';
+  document.getElementById('chk-list-view').style.display='';
+  renderChecklists();
+}
+function toggleUnanswered(){
+  chkOnlyUnanswered = !chkOnlyUnanswered;
+  document.getElementById('chk-filter').textContent = chkOnlyUnanswered ? 'Show all questions' : 'Show only unanswered';
+  renderChecklistForm();
+}
+function renderChecklistForm(){
+  if(!curChk) return;
+  var a = chkAnswered(curChk), pct = curChk.total ? Math.round(a*100/curChk.total) : 0;
+  document.getElementById('chk-count').textContent = a+' of '+curChk.total+' answered'+(a>=curChk.total?' — complete':'');
+  document.getElementById('chk-prog').style.width = pct+'%';
+  var h = '';
+  curChk.groups.forEach(function(g, gi){
+    var items = g.items.filter(function(it){ return !chkOnlyUnanswered || !it.ans; });
+    if(!items.length) return;
+    if(g.title) h += '<div class="grp-title">'+esc(g.title)+'</div>';
+    g.items.forEach(function(it, ii){
+      if(chkOnlyUnanswered && it.ans) return;
+      h += '<div class="q-card'+(it.ans?' answered':'')+'">'
+        + '<div class="qtext"><span class="qnum">'+it.n+'.</span>'+esc(it.q)+'</div>'
+        + '<div class="ansbtns">'
+        +   '<button class="ansbtn'+(it.ans==='Y'?' on-Y':'')+'" onclick="setAns('+gi+','+ii+',\'Y\')">Yes</button>'
+        +   '<button class="ansbtn'+(it.ans==='N'?' on-N':'')+'" onclick="setAns('+gi+','+ii+',\'N\')">No</button>'
+        +   '<button class="ansbtn'+(it.ans==='NA'?' on-NA':'')+'" onclick="setAns('+gi+','+ii+',\'NA\')">N/A</button>'
+        + '</div>'
+        + '<textarea placeholder="Comments / supporting reference…" oninput="setCmt('+gi+','+ii+',this.value)">'+esc(it.comment||'')+'</textarea>'
+        + '</div>';
+    });
+  });
+  document.getElementById('chk-body').innerHTML = h || '<div class="empty">Nothing left to answer.</div>';
+}
+var _chkSaveTimer = null;
+function chkSaveSoon(){
+  clearTimeout(_chkSaveTimer);
+  _chkSaveTimer = setTimeout(function(){ save(); }, 1200);
+}
+function setAns(gi, ii, v){
+  if(!curChk) return;
+  var it = curChk.groups[gi].items[ii];
+  it.ans = (it.ans === v) ? '' : v;
+  chkSaveSoon(); renderChecklistForm();
+}
+function setCmt(gi, ii, v){
+  if(!curChk) return;
+  curChk.groups[gi].items[ii].comment = v;
+  chkSaveSoon();
+}
+function delChecklist(id){
+  var c = (mem.checklists||[]).find(function(x){ return x.id===id; });
+  if(!c) return;
+  if(!confirm('Delete "'+c.name+'" and its answers? This cannot be undone.')) return;
+  mem.checklists = mem.checklists.filter(function(x){ return x.id!==id; });
+  save(); renderChecklists(); toast('Checklist deleted.');
+}
+
+function checklistTableHtml(c){
+  var rows = '';
+  c.groups.forEach(function(g){
+    if(g.title) rows += '<tr><td colspan="5" style="background:#221D55;color:#fff;font-weight:bold">'+esc(g.title)+'</td></tr>';
+    g.items.forEach(function(it){
+      var mk = function(v){ return it.ans===v ? 'X' : ''; };
+      rows += '<tr>'
+        + '<td>'+it.n+'. '+esc(it.q)+'</td>'
+        + '<td align="center">'+mk('Y')+'</td>'
+        + '<td align="center">'+mk('N')+'</td>'
+        + '<td align="center">'+mk('NA')+'</td>'
+        + '<td>'+esc(it.comment||'')+'</td></tr>';
+    });
+  });
+  return '<table border="1" cellspacing="0" cellpadding="5" style="border-collapse:collapse;width:100%;font-family:Calibri;font-size:10pt">'
+    + '<tr><th style="background:#221D55;color:#fff;width:45%">QUESTIONS</th>'
+    + '<th style="background:#221D55;color:#fff">Yes</th><th style="background:#221D55;color:#fff">No</th>'
+    + '<th style="background:#221D55;color:#fff">N/A</th><th style="background:#221D55;color:#fff;width:30%">COMMENTS</th></tr>'
+    + rows + '</table>';
+}
+function exportChecklistWord(id){
+  var c = id ? (mem.checklists||[]).find(function(x){ return x.id===id; }) : curChk;
+  if(!c) return;
+  var a = chkAnswered(c);
+  var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
+    + '<head><meta charset="utf-8"><title>'+esc(c.name)+'</title></head><body style="font-family:Calibri">'
+    + '<h2 style="color:#221D55">AZTLAN EQUITY MANAGEMENT, LLC</h2>'
+    + '<h3>'+esc(c.name)+'</h3>'
+    + '<p style="font-size:10pt">Source document: '+esc(c.fileName)+'<br>Completed by: '+esc(c.by||'')+'<br>'
+    + 'Answered: '+a+' of '+c.total+'<br>Exported: '+fmt(today())+'</p>'
+    + checklistTableHtml(c)
+    + '</body></html>';
+  var blob = new Blob(['﻿', html], {type:'application/msword'});
+  var link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = c.name.replace(/[^\w\- ]/g,'') + ' - Aztlan responses.doc';
+  link.click();
+  toast('Word file downloaded.');
+}
+async function emailChecklist(){
+  if(!curChk) return;
+  var to = prompt('Send the completed checklist to:', 'darren_kane@missioncriticalservices.com');
+  if(!to) return;
+  var a = chkAnswered(curChk);
+  if(a < curChk.total && !confirm('Only '+a+' of '+curChk.total+' questions are answered. Send anyway?')) return;
+  var lines = [];
+  curChk.groups.forEach(function(g){
+    if(g.title) lines.push('\n== '+g.title+' ==');
+    g.items.forEach(function(it){
+      var label = it.ans==='Y'?'YES':(it.ans==='N'?'NO':(it.ans==='NA'?'N/A':'(unanswered)'));
+      lines.push(it.n+'. '+it.q+'\n   Answer: '+label+(it.comment?'\n   Comments: '+it.comment:''));
+    });
+  });
+  try{
+    await sendMail(to.trim(), '', curChk.name+' — Aztlan responses',
+      'Hello,\n\nPlease find below Aztlan Equity Management, LLC\'s responses to the '+curChk.name+'.\n'
+      + 'Source document: '+curChk.fileName+'\nCompleted by: '+(curChk.by||'')+'\nAnswered: '+a+' of '+curChk.total+'\n\n'
+      + lines.join('\n') + '\n\n— Compliance Department, Aztlan Equity Management, LLC');
+    curChk.status = 'sent';
+    save(); renderChecklistForm();
+    toast('Checklist emailed to '+to.trim()+'.');
+  }catch(e){ toast('Could not send: '+e.message); }
 }
 
 // ---------- personal securities ----------
@@ -1309,7 +1607,7 @@ function renderDash(){
   }).join('') : '<div class="empty">No quarterly sends scheduled.</div>';
 }
 
-function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); renderComments(); renderPerSec(); }
+function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); renderComments(); renderPerSec(); renderChecklists(); if(curChk) renderChecklistForm(); }
 
 document.getElementById('n-type').addEventListener('change', function(){
   document.getElementById('n-date-wrap').style.display = this.value==='trimestral'?'':'none';
