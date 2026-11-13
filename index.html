@@ -587,7 +587,13 @@ var FLOW = ['borrador','revision_cco2','aprobado'];
 var FLOW_NAMES = ['CCO 1 prepares','CCO 2 approves','Approved'];
 
 // ---------- utilities ----------
-function fmt(d){ return new Date(d).toLocaleDateString('en-US',{day:'2-digit',month:'short',year:'numeric'}); }
+// A plain YYYY-MM-DD is parsed by Date() as UTC midnight, which renders as the
+// previous day in any negative-offset timezone. Pin it to local noon instead.
+function dparse(d){
+  if(typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) return new Date(d+'T12:00:00');
+  return new Date(d);
+}
+function fmt(d){ return dparse(d).toLocaleDateString('en-US',{day:'2-digit',month:'short',year:'numeric'}); }
 function today(){ return new Date().toISOString().slice(0,10); }
 function toast(msg){
   var t = document.getElementById('toast');
@@ -1524,7 +1530,7 @@ function trPreset(k){
   var titles = {g:'Compliance Manual Acknowledgment (Exhibit G)', pa:'Personal Accounts Disclosure', oba:'Outside Business Activities Certification', sm:'Social Media Usage Certification'};
   if(!document.getElementById('t-title').value.trim()) document.getElementById('t-title').value = titles[k]+' '+new Date().getFullYear();
 }
-function trDays(a, b){ return Math.round((new Date(b) - new Date(a)) / 86400000); }
+function trDays(a, b){ return Math.round((dparse(b) - dparse(a)) / 86400000); }
 function trAudList(t){
   var e = mem.emails || {}, out = [];
   if(t.aud === 'colab' || t.aud === 'all'){
