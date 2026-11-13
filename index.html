@@ -555,6 +555,10 @@ async function spUpload(name, blob){
 async function spGetBlob(spId){
   return await graph('/sites/'+siteId+'/drive/items/'+spId+'/content');
 }
+async function spDelete(spId){
+  // moves the file to the SharePoint recycle bin, where it can still be restored
+  return await graph('/sites/'+siteId+'/drive/items/'+spId, {method:'DELETE'});
+}
 function blobToDataURL(blob){
   return new Promise(function(res, rej){
     var r = new FileReader();
@@ -1301,9 +1305,11 @@ function viewDoc(id){
   if(d.state!=='aprobado' && STATES[d.state].owner!==role && (role==='cco1'||role==='cco2'||role==='jefe')){
     acts.push('<button class="btn btn-primary" onclick="remindDoc(\''+d.id+'\')">Email reminder</button>');
   }
+  if(role==='cco1'||role==='cco2'){
+    acts.push('<button class="btn btn-red" onclick="delDoc(\''+d.id+'\')">Delete</button>');
+  }
   if(d.state==='aprobado' && (role==='cco1'||role==='cco2')){
     acts.push('<button class="btn btn-gold" onclick="sendThird(\''+d.id+'\')">Send to third party</button>');
-    acts.push('<button class="btn btn-red" onclick="delDoc(\''+d.id+'\')">Delete</button>');
   }
   acts.push('<button class="btn btn-ghost" onclick="window.print()">Print / PDF</button>');
   acts.push('<button class="btn btn-ghost" onclick="closeM(\'m-view\')">Close</button>');
@@ -1336,11 +1342,23 @@ function advance(id, approve){
   save(); closeM('m-view'); renderAll();
   toast(approve ? 'Document moved forward in the workflow.' : 'Document returned to CCO 1.');
 }
-function delDoc(id){
+async function delDoc(id){
   var d = mem.docs.find(function(x){return x.id===id;});
   if(!d) return;
-  if(!confirm('Permanently delete "'+d.title+'"? It will also be removed from the repository and cannot be undone.')) return;
+  if(role!=='cco1' && role!=='cco2'){ toast('Only the CCOs can delete a document.'); return; }
+  var warn = 'Delete "'+d.title+'"?\n\n'
+    + 'Status: '+STATES[d.state].label+'\n'
+    + (d.file ? 'Attached file: '+d.file.name+'\n' : '')
+    + '\nThe document and its approval history are removed from the system.'
+    + (d.file ? ' The attached file goes to the SharePoint recycle bin, where IT can still restore it for 93 days.' : '');
+  if(!confirm(warn)) return;
+  if(d.file && d.file.spId){
+    try{ await spDelete(d.file.spId); }
+    catch(e){ if(!confirm('The attached file could not be removed from SharePoint ('+e.message.slice(0,80)+'). Delete the document record anyway?')) return; }
+  }
   mem.docs = mem.docs.filter(function(x){return x.id!==id;});
+  notifyRole(role==='cco1'?'cco2':'cco1', 'Document deleted: '+d.title,
+    myName+' deleted the document "'+d.title+'" ('+d.type+'), which was at the stage: '+STATES[d.state].label+'.');
   save(); closeM('m-view'); renderAll();
   toast('Document deleted.');
 }
@@ -1388,7 +1406,9 @@ function renderDocs(){
     var tr = document.createElement('tr');
     tr.innerHTML = '<td><strong>'+esc(d.title)+'</strong>'+(d.file?' 📎':'')+'</td><td>'+esc(d.type)+'</td><td>'+fmt(d.created)+'</td>'
       + '<td><span class="badge '+s.cls+'">'+s.label+'</span></td>'
-      + '<td><button class="btn btn-ghost" style="padding:5px 12px" onclick="viewDoc(\''+d.id+'\')">Open</button></td>';
+      + '<td><div class="row"><button class="btn btn-ghost" style="padding:5px 12px" onclick="viewDoc(\''+d.id+'\')">Open</button>'
+      + ((role==='cco1'||role==='cco2') ? '<button class="btn btn-red" style="padding:5px 12px" onclick="delDoc(\''+d.id+'\')">Delete</button>' : '')
+      + '</div></td>';
     tb.appendChild(tr);
   });
   document.getElementById('doc-empty').style.display = mem.docs.length?'none':'';
