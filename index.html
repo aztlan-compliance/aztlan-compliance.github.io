@@ -639,6 +639,9 @@ function openInbox(){
 // ---------- compliance checklists ----------
 var curChk = null, chkOnlyUnanswered = false;
 var MAMMOTH_URL = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js';
+var JSZIP_URL   = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+var W_NS   = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+var W14_NS = 'http://schemas.microsoft.com/office/word/2010/wordml';
 
 function fileToArrayBuffer(f){
   return new Promise(function(res, rej){
@@ -650,31 +653,54 @@ function fileToArrayBuffer(f){
 }
 function txt(el){ return (el.textContent || '').replace(/\s+/g,' ').trim(); }
 
-function parseChecklistHtml(html){
-  var doc = new DOMParser().parseFromString(html, 'text/html');
+function wText(el){
+  var ts = el.getElementsByTagNameNS(W_NS, 't'), s = '';
+  for(var i=0;i<ts.length;i++) s += (ts[i].textContent || '');
+  return s.replace(/\s+/g,' ').trim();
+}
+// Reads word/document.xml directly so that existing answers (Word checkboxes or
+// a typed X) and comments are preserved when re-importing a completed checklist.
+function parseChecklistXml(xml){
+  var doc = new DOMParser().parseFromString(xml, 'application/xml');
   var groups = [], cur = null, n = 0;
-  var rows = doc.querySelectorAll('tr');
-  for(var i=0;i<rows.length;i++){
-    var tds = rows[i].querySelectorAll('td,th');
-    if(!tds.length) continue;
-    var cells = Array.prototype.map.call(tds, txt);
-    var first = cells[0];
-    if(!first) continue;
-    var uniq = cells.filter(function(c){ return c; });
-    var allSame = uniq.length > 1 && uniq.every(function(c){ return c === uniq[0]; });
-    var isHeader = /^(questions?|action item)$/i.test(first)
-      || (cells.length >= 4 && /^yes$/i.test(cells[1]||'') && /^no$/i.test(cells[2]||''));
-    if(isHeader) continue;
-    // section header: one cell, or every cell identical, and short-ish
-    if((cells.length === 1 || allSame) && first.length < 120){
-      cur = {title: first, items: []};
-      groups.push(cur);
-      continue;
+  var tbls = doc.getElementsByTagNameNS(W_NS, 'tbl');
+  for(var ti=0; ti<tbls.length; ti++){
+    var trs = tbls[ti].getElementsByTagNameNS(W_NS, 'tr');
+    for(var ri=0; ri<trs.length; ri++){
+      var parts = [], kids = trs[ri].childNodes;
+      for(var k=0;k<kids.length;k++){
+        if(kids[k].localName === 'tc' || kids[k].localName === 'sdt') parts.push(kids[k]);
+      }
+      var tcs = parts.filter(function(p){ return p.localName === 'tc'; });
+      var sdts = parts.filter(function(p){ return p.localName === 'sdt'; });
+      if(!tcs.length) continue;
+      var texts = tcs.map(wText);
+      var first = texts[0];
+      if(!first) continue;
+      if(/^(questions?|action item)$/i.test(first)) continue;
+      if(texts.length >= 4 && /^yes$/i.test(texts[1]||'') && /^no$/i.test(texts[2]||'')) continue;
+      var uniq = texts.filter(function(x){ return x; });
+      var allSame = uniq.length > 1 && uniq.every(function(x){ return x === uniq[0]; });
+      if((texts.length === 1 || allSame) && first.length < 120){
+        cur = {title: first, items: []}; groups.push(cur); continue;
+      }
+      if(first.length < 12) continue;
+      if(!cur){ cur = {title:'', items:[]}; groups.push(cur); }
+      // detect an existing answer
+      var marks = [false,false,false];
+      if(sdts.length >= 3){
+        marks = sdts.slice(0,3).map(function(s){
+          var cb = s.getElementsByTagNameNS(W14_NS, 'checked')[0];
+          var v = cb ? cb.getAttributeNS(W14_NS, 'val') : null;
+          return v === '1' || v === 'true' || /[☒✓Xx]/.test(wText(s));
+        });
+      } else if(texts.length >= 5){
+        marks = [1,2,3].map(function(i){ return /[☒✓Xx]/.test(texts[i] || ''); });
+      }
+      var ans = marks[0] ? 'Y' : (marks[1] ? 'N' : (marks[2] ? 'NA' : ''));
+      n++;
+      cur.items.push({n:n, q:first, ans:ans, comment:(texts.length>=2 ? texts[texts.length-1] : '')});
     }
-    if(first.length < 12) continue;           // noise
-    if(!cur){ cur = {title:'', items:[]}; groups.push(cur); }
-    n++;
-    cur.items.push({n:n, q:first, ans:'', comment:''});
   }
   return {groups: groups.filter(function(g){ return g.items.length; }), total: n};
 }
@@ -683,15 +709,19 @@ async function importChecklist(f){
   if(!f) return;
   if(!/\.docx$/i.test(f.name)){ toast('Please choose a .docx file.'); return; }
   toast('Reading the checklist…');
-  var ok = await new Promise(function(res){ loadLib(MAMMOTH_URL, res); });
+  var ok = await new Promise(function(res){ loadLib(JSZIP_URL, res); });
   if(!ok){ toast('Could not load the Word reader (needs internet the first time).'); return; }
   var parsed;
   try{
     var buf = await fileToArrayBuffer(f);
-    var out = await mammoth.convertToHtml({arrayBuffer: buf});
-    parsed = parseChecklistHtml(out.value);
+    var zip = await JSZip.loadAsync(buf);
+    var entry = zip.file('word/document.xml');
+    if(!entry) throw new Error('that does not look like a Word document');
+    parsed = parseChecklistXml(await entry.async('string'));
   }catch(e){ toast('Could not read the file: '+e.message); return; }
   if(!parsed.total){ toast('No question table was found in that document.'); return; }
+  var pre = 0;
+  parsed.groups.forEach(function(g){ g.items.forEach(function(it){ if(it.ans) pre++; }); });
   var meta = null;
   try{ toast('Saving the original to SharePoint…'); meta = await spUpload(f.name, f); }catch(e){}
   if(!mem.checklists) mem.checklists = [];
@@ -709,7 +739,9 @@ async function importChecklist(f){
   mem.checklists.unshift(c);
   document.getElementById('chk-file').value = '';
   save(); renderChecklists();
-  toast(parsed.total+' questions imported. Open it to start answering.');
+  toast(pre
+    ? parsed.total+' questions imported — '+pre+' answers were already filled in and have been carried over.'
+    : parsed.total+' questions imported. Open it to start answering.');
   openChecklist(c.id);
 }
 
