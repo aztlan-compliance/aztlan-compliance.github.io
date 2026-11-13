@@ -212,7 +212,9 @@ textarea{min-height:80px;resize:vertical}
       </div>
       <div style="margin-top:16px" class="row">
         <button class="btn btn-primary" onclick="sendNotif()">Send / Schedule</button>
+        <button class="btn btn-ghost" onclick="saveNotifDraft()">Save as draft</button>
       </div>
+      <p class="hint">A draft is stored in the system and emailed to nobody until you press "Email now" on it.</p>
       <hr style="margin:20px 0;border:none;border-top:1px solid #e5e2da">
       <h2 style="font-size:15px">Emails & roles</h2>
       <label>Employees (comma separated)</label>
@@ -226,6 +228,10 @@ textarea{min-height:80px;resize:vertical}
       <p class="hint">Each person's role is assigned automatically from their email at sign-in. Any other company email signs in as an employee. Emails are actually sent through Outlook.</p>
     </div>
     <div>
+      <div class="card" style="margin-bottom:16px" id="draft-card">
+        <h2>Drafts — not sent</h2>
+        <div id="draft-list"></div>
+      </div>
       <div class="card" style="margin-bottom:16px">
         <h2>Scheduled (quarterly)</h2>
         <div id="trim-list"></div>
@@ -2283,6 +2289,80 @@ function ackNotif(id){
   save(); renderAll();
   toast('Receipt confirmed. Thank you.');
 }
+function saveNotifDraft(){
+  var subj = document.getElementById('n-subj').value.trim();
+  var body = document.getElementById('n-body').value.trim();
+  if(!subj || !body){ toast('Fill in the subject and message.'); return; }
+  var n = {
+    id:'N'+(mem.seq++), kind: document.getElementById('n-type').value,
+    to: document.getElementById('n-to').value,
+    subj: subj, body: body, sent: [], deliveries: [], acks: [], draft: true,
+    created: today(), by: myName
+  };
+  if(n.kind==='trimestral') n.next = document.getElementById('n-date').value || today();
+  mem.notifs.unshift(n);
+  document.getElementById('n-subj').value=''; document.getElementById('n-body').value='';
+  save(); renderAll();
+  toast('Saved as a draft. Nothing was emailed.');
+}
+function editNotifDraft(id){
+  var n = (mem.notifs||[]).find(function(x){ return x.id===id; });
+  if(!n || !n.draft) return;
+  document.getElementById('n-type').value = n.kind;
+  document.getElementById('n-to').value = n.to;
+  document.getElementById('n-subj').value = n.subj;
+  document.getElementById('n-body').value = n.body;
+  document.getElementById('n-date-wrap').style.display = n.kind==='trimestral'?'':'none';
+  mem.notifs = mem.notifs.filter(function(x){ return x.id!==id; });
+  save(); renderAll();
+  document.getElementById('n-subj').scrollIntoView({block:'center'});
+  toast('Loaded into the form. Save it again or send it.');
+}
+async function sendNotifDraft(id){
+  var n = (mem.notifs||[]).find(function(x){ return x.id===id; });
+  if(!n) return;
+  var who = n.to==='cco2' ? 'CCO 2' : 'all employees and both CCOs';
+  if(!confirm('Email "'+n.subj+'" to '+who+' now?\n\nThis sends a real email from your Outlook account. It cannot be unsent.')) return;
+  n.draft = false;
+  n.sent.push(today());
+  if(n.kind==='trimestral') n.next = plus3m(n.next || today());
+  save();
+  await emailNotif(n.id);
+  renderAll();
+}
+function delNotifDraft(id){
+  var n = (mem.notifs||[]).find(function(x){ return x.id===id; });
+  if(!n) return;
+  if(!confirm('Delete the draft "'+n.subj+'"?')) return;
+  mem.notifs = mem.notifs.filter(function(x){ return x.id!==id; });
+  save(); renderAll(); toast('Draft deleted.');
+}
+function renderDrafts(){
+  var el = document.getElementById('draft-list');
+  if(!el) return;
+  var canManage = (role==='cco1'||role==='cco2');
+  var list = (mem.notifs||[]).filter(function(n){ return n.draft; });
+  document.getElementById('draft-card').style.display = (canManage && list.length) ? '' : 'none';
+  if(!list.length) return;
+  el.innerHTML = list.map(function(n){
+    var long = (n.body||'').length > 420;
+    return '<div class="notif-item"><h4>'+esc(n.subj)+'</h4>'
+      + '<small style="color:var(--slate)">Draft saved '+fmt(n.created||today())+' by '+esc(n.by||'')+' · '
+      + (n.to==='cco2'?'CCO 2 only':'All employees')+' · '+(n.kind==='trimestral'?'Quarterly':'Immediate')
+      + ' · <strong style="color:#B3261E">not emailed to anyone</strong></small>'
+      + '<div style="margin:10px 0" class="row">'
+      +   '<button class="btn btn-gold" onclick="sendNotifDraft(\''+n.id+'\')">Email now</button>'
+      +   '<button class="btn btn-ghost" style="padding:5px 12px" onclick="editNotifDraft(\''+n.id+'\')">Edit</button>'
+      +   '<button class="btn btn-red" style="padding:5px 12px" onclick="delNotifDraft(\''+n.id+'\')">Delete</button>'
+      + '</div>'
+      + (long
+          ? '<p id="nb-'+n.id+'" style="display:none;white-space:pre-wrap">'+esc(n.body)+'</p>'
+            + '<p id="nbs-'+n.id+'" style="color:var(--slate)">'+esc((n.body||'').slice(0,260))+'…</p>'
+            + '<button class="btn btn-ghost" style="padding:4px 10px;font-size:11.5px" onclick="toggleNotifBody(\''+n.id+'\',this)">Read the full notice</button>'
+          : '<p style="white-space:pre-wrap">'+esc(n.body)+'</p>')
+      + '</div>';
+  }).join('');
+}
 function toggleNotifBody(id, btn){
   var full = document.getElementById('nb-'+id), snip = document.getElementById('nbs-'+id);
   if(!full) return;
@@ -2374,6 +2454,7 @@ async function runScheduler(){
   var changed = false;
   for(var i=0;i<(mem.notifs||[]).length;i++){
     var n = mem.notifs[i];
+    if(n.draft) continue;                      // a draft is never sent automatically
     if(n.kind!=='trimestral' || !n.next) continue;
     while(n.next <= today()){
       n.sent.push(n.next); n.next = plus3m(n.next); changed = true;
@@ -2387,7 +2468,7 @@ function delNotif(id){
   save(); renderAll(); toast('Schedule canceled.');
 }
 function renderNotifs(){
-  var trims = mem.notifs.filter(function(n){return n.kind==='trimestral' && !(role==='colab' && n.to==='cco2');});
+  var trims = mem.notifs.filter(function(n){return n.kind==='trimestral' && !n.draft && !(role==='colab' && n.to==='cco2');});
   var canManage = role==='cco1'||role==='cco2';
   var t = document.getElementById('trim-list');
   t.innerHTML = trims.length ? trims.map(function(n){
@@ -2682,7 +2763,7 @@ function renderNavPills(){
   var tr = (mem.trainings||[]).filter(function(t){ return trIsMine(t) && !trDone(t); });
   navPill('pill-train', tr.length, tr.some(function(t){ return trDays(today(), t.due) < 0; }) ? 'red' : 'gold');
 }
-function renderAll(){ renderDocs(); renderNotifs(); renderRepo(); renderDash(); renderBell(); renderComments(); renderPerSec(); renderChecklists(); renderTraining(); renderFindings(); renderCal(); renderNavPills(); if(curChk) renderChecklistForm(); }
+function renderAll(){ renderDocs(); renderNotifs(); renderDrafts(); renderRepo(); renderDash(); renderBell(); renderComments(); renderPerSec(); renderChecklists(); renderTraining(); renderFindings(); renderCal(); renderNavPills(); if(curChk) renderChecklistForm(); }
 
 document.getElementById('n-type').addEventListener('change', function(){
   document.getElementById('n-date-wrap').style.display = this.value==='trimestral'?'':'none';
