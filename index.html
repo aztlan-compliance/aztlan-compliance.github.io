@@ -1840,6 +1840,21 @@ function renderTraining(){
 async function previewTraining(id){
   var t = (mem.trainings||[]).find(function(x){ return x.id===id; });
   if(!t || !t.file) return;
+  var ext = (t.file.name.split('.').pop()||'').toLowerCase();
+  // An interactive training is a web page: it has to run, not be read as source.
+  if(ext==='html' || ext==='htm'){
+    var tab = window.open('', '_blank');          // opened synchronously so the popup blocker allows it
+    if(!tab){ toast('Allow pop-ups for this site to open the training.'); return; }
+    tab.document.write('<p style="font-family:Segoe UI,sans-serif;padding:24px;color:#7F8FA9">Loading the training…</p>');
+    try{
+      var b = await spGetBlob(t.file.spId);
+      tab.location = URL.createObjectURL(new Blob([b], {type:'text/html'}));
+    }catch(e){
+      tab.close();
+      toast('Could not open: '+e.message);
+    }
+    return;
+  }
   try{
     toast('Opening…');
     var blob = await spGetBlob(t.file.spId);
