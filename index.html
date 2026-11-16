@@ -1724,7 +1724,36 @@ async function saveTraining(){
       + '\n\n— Compliance Department, Aztlan Equity Management, LLC');
   }catch(e){}
 }
-function markTrainingDone(id){
+async function attachTrainCert(id){
+  var t = (mem.trainings||[]).find(function(x){ return x.id===id; });
+  var d = t && trDone(t);
+  if(!t || !d) return;
+  var inp = document.getElementById('tc-'+id);
+  var f = inp && inp.files[0];
+  if(!f){ toast('Choose the file first.'); return; }
+  try{
+    toast('Uploading your certificate…');
+    d.cert = await spUpload(f.name, f);
+    save(); renderTraining();
+    toast('Certificate attached to your record.');
+  }catch(e){ toast('Could not upload: '+e.message); }
+}
+async function openTrainCert(id, email){
+  var t = (mem.trainings||[]).find(function(x){ return x.id===id; });
+  if(!t) return;
+  var d = (t.done||[]).find(function(x){ return eqMail(x.email, email); });
+  if(!d || !d.cert) return;
+  try{
+    toast('Opening…');
+    var blob = await spGetBlob(d.cert.spId);
+    var data = await blobToDataURL(blob);
+    previewData(d.cert.name, d.cert.mime, data, function(){
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = d.cert.name; a.click();
+    });
+  }catch(e){ toast('Could not open: '+e.message); }
+}
+async function markTrainingDone(id){
   var t = (mem.trainings||[]).find(function(x){ return x.id===id; });
   if(!t) return;
   if(trDone(t)){ toast('You already confirmed this one.'); return; }
@@ -1733,9 +1762,16 @@ function markTrainingDone(id){
     : 'Confirm that you reviewed "'+t.title+'" in full?\n\nYour name and today\'s date are recorded as evidence for the annual review.';
   if(!confirm(ask)) return;
   if(!t.done) t.done = [];
-  t.done.push({email: myEmail, name: myName, at: today(), stmt: t.kind==='cert' ? t.stmt : undefined});
+  var entry = {email: myEmail, name: myName, at: today(), stmt: t.kind==='cert' ? t.stmt : undefined};
+  t.done.push(entry);
+  var inp = document.getElementById('tc-'+id);
+  var cf = inp && inp.files[0];
+  if(cf){
+    try{ toast('Uploading your certificate…'); entry.cert = await spUpload(cf.name, cf); }
+    catch(e){ toast('Recorded, but the certificate could not be uploaded: '+e.message); }
+  }
   save(); renderTraining();
-  toast('Recorded. Thank you.');
+  toast(cf ? 'Recorded with your certificate. Thank you.' : 'Recorded. Thank you.');
   notifyRole('cco1', (t.kind==='cert'?'Certification signed: ':'Training completed: ')+t.title,
     myName+(t.kind==='cert'?' signed "':' confirmed completion of "')+t.title+'".');
 }
@@ -1811,7 +1847,17 @@ function renderTraining(){
       + '<div class="row" style="margin-top:12px">'
       +   (t.file ? '<button class="btn btn-ghost" onclick="previewTraining(\''+t.id+'\')">'+(cert?'Open form':'Open material')+'</button>' : (cert?'':'<small style="color:var(--slate)">No material attached.</small>'))
       +   (d ? '' : '<button class="btn btn-gold" onclick="markTrainingDone(\''+t.id+'\')">'+(cert?'I certify the above':'I completed this training')+'</button>')
-      + '</div></div>';
+      + '</div>'
+      + (d
+          ? (d.cert
+              ? '<div style="margin-top:10px"><small style="color:var(--slate)">Your certificate: </small>'
+                + '<button class="btn btn-ghost" style="padding:4px 10px;font-size:11.5px" onclick="openTrainCert(\''+t.id+'\',\''+esc(d.email)+'\')">'+esc(d.cert.name)+'</button></div>'
+              : '<div style="margin-top:10px"><small style="color:var(--slate)">You can still attach your certificate: </small>'
+                + '<input type="file" id="tc-'+t.id+'" style="font-size:12.5px;display:inline-block;width:auto">'
+                + '<button class="btn btn-ghost" style="padding:4px 10px;font-size:11.5px" onclick="attachTrainCert(\''+t.id+'\')">Upload</button></div>')
+          : '<div style="margin-top:10px"><small style="color:var(--slate)">Certificate (optional — print the result page as a PDF and attach it here): </small>'
+            + '<input type="file" id="tc-'+t.id+'" style="font-size:12.5px;display:inline-block;width:auto"></div>')
+      + '</div>';
   }).join('') : '<div class="card"><div class="empty">No training is assigned to you right now.</div></div>';
 
   var adm = document.getElementById('tr-admin');
@@ -1828,7 +1874,14 @@ function renderTraining(){
       + '<td>'+TR_AUD[t.aud]+'</td><td>'+fmt(t.given)+'</td>'
       + '<td>'+fmt(t.due)+(left<0 && pend.length ? '<br><small style="color:#B3261E">'+Math.abs(left)+' days overdue</small>' : '')+'</td>'
       + '<td>'+done+' / '+all.length
-      + (pend.length ? '<br><small style="color:var(--slate)" title="'+esc(pend.join(', '))+'">'+pend.length+' pending</small>' : '')+'</td>'
+      + (pend.length ? '<br><small style="color:var(--slate)" title="'+esc(pend.join(', '))+'">'+pend.length+' pending</small>' : '')
+      + ((t.done||[]).length
+          ? '<br>'+(t.done||[]).map(function(dd){
+              return dd.cert
+                ? '<a href="#" style="font-size:11.5px;color:var(--navy)" onclick="openTrainCert(\''+t.id+'\',\''+esc(dd.email)+'\');return false" title="Open the certificate">&#128206; '+esc((dd.name||dd.email).split(' ')[0])+'</a>'
+                : '<span style="font-size:11.5px;color:var(--slate)" title="Confirmed without attaching a certificate">'+esc((dd.name||dd.email).split(' ')[0])+'</span>';
+            }).join(' · ')
+          : '')+'</td>'
       + '<td><div class="row">'
       +   (pend.length ? '<button class="btn btn-primary" style="padding:5px 12px" onclick="sendTrainReminders(\''+t.id+'\',true)">Remind</button>' : '')
       +   '<button class="btn btn-red" style="padding:5px 12px" onclick="delTraining(\''+t.id+'\')">Delete</button>'
