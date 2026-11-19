@@ -1772,8 +1772,8 @@ async function markTrainingDone(id){
   }
   save(); renderTraining();
   toast(cf ? 'Recorded with your certificate. Thank you.' : 'Recorded. Thank you.');
-  notifyRole('cco1', (t.kind==='cert'?'Certification signed: ':'Training completed: ')+t.title,
-    myName+(t.kind==='cert'?' signed "':' confirmed completion of "')+t.title+'".');
+  // No email to the CCO on each confirmation: with eleven people that is inbox noise,
+  // and the tab already shows who has signed and who is pending. Same rule as ackNotif().
 }
 function delTraining(id){
   var t = (mem.trainings||[]).find(function(x){ return x.id===id; });
