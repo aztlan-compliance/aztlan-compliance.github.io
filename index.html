@@ -1799,7 +1799,8 @@ async function sendTrainReminders(id, manual){
       if(last && trDays(last, today()) < 15){ skipped++; continue; }
     }
     try{
-      await sendMail(pending.join(', '), '', 'Reminder: training pending — '+t.title,
+      // BCC, never To: nobody should see the list of who else is behind.
+      await sendMail(myEmail, pending.join(', '), 'Reminder: training pending — '+t.title,
         'Hello,\n\nOur records show you have not yet confirmed completion of the compliance training "'+t.title+'".\n'
         + 'Deadline: '+fmt(t.due)+(due < 0 ? ' ('+Math.abs(due)+' days overdue)' : '')+'\n'
         + (t.desc ? '\n'+t.desc+'\n' : '')
@@ -2482,10 +2483,11 @@ async function remindNotifAcks(id, manual){
       // enabling the feature would fire a reminder for every notice ever sent.
       var lastSend = (n.sent||[])[(n.sent||[]).length-1];
       if(!lastSend || trDays(lastSend, today()) > 60) continue;
-      if(n.lastAckRem && trDays(n.lastAckRem, today()) < 15) continue;
+      if(n.lastAckRem && trDays(n.lastAckRem, today()) < 30) continue;
     }
     try{
-      await sendMail(pend.join(', '), '', 'Confirmation pending: '+n.subj,
+      // BCC, never To: nobody should see the list of who else is behind.
+      await sendMail(myEmail, pend.join(', '), 'Confirmation pending: '+n.subj,
         'Hello,\n\nOur records show you have not yet confirmed receipt of the compliance notice "'+n.subj+'", '
         + 'distributed on '+fmt((n.sent||[])[(n.sent||[]).length-1])+'.\n\n'
         + 'Please open the compliance system, go to the Notifications tab and press "Confirm received" on that notice:\n'
@@ -2503,7 +2505,7 @@ async function remindNotifAcks(id, manual){
 function autoNotifAckReminders(){
   if(role!=='cco1' && role!=='cco2') return;
   remindNotifAcks(null, false).then(function(n){
-    if(n) toast(n+' automatic confirmation reminder(s) sent (15-day cycle).');
+    if(n) toast(n+' automatic confirmation reminder(s) sent (30-day cycle).');
   });
 }
 async function sendNotif(){
